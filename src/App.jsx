@@ -143,26 +143,47 @@ const Icon = ({ name, size = 18, color = "currentColor" }) => {
 
 // ─── Auth Screen ──────────────────────────────────────────────────────────────
 function AuthScreen({ onLogin }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [firebaseUser, setFirebaseUser] = useState(null);
+  const [step, setStep] = useState("login");
   const [selectedRole, setSelectedRole] = useState(null);
-  const [selectedUser, setSelectedUser] = useState(null);
-  const [step, setStep] = useState("login"); // login | role | user
 
-  const handleGoogleLogin = () => setStep("role");
-  const handleRoleSelect = (role) => { setSelectedRole(role); setStep("user"); };
-  const handleUserSelect = (user) => {
-    onLogin({ ...user, role: selectedRole });
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const u = result.user;
+      setFirebaseUser(u);
+      setStep("role");
+    } catch (err) {
+      setError("Login failed. Please try again.");
+    }
+    setLoading(false);
   };
 
-  const allUsers = selectedRole === "manager" ? MOCK_USERS.managers : MOCK_USERS.employees;
+  const handleRoleSelect = (role) => {
+    setSelectedRole(role);
+    const u = firebaseUser;
+    const nameParts = (u.displayName || u.email).split(" ");
+    const initials = nameParts.map(w => w[0]).join("").slice(0,2).toUpperCase();
+    onLogin({
+      id: u.uid,
+      name: u.displayName || u.email.split("@")[0],
+      email: u.email,
+      avatar: initials,
+      role: role,
+      photoUrl: u.photoURL || null,
+      teamId: null,
+    });
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: `linear-gradient(135deg, ${COLORS.navy} 0%, ${COLORS.navyLight} 50%, ${COLORS.navyMid} 100%)`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", position: "relative", overflow: "hidden" }}>
-      {/* Background orbs */}
       <div style={{ position: "absolute", width: 500, height: 500, borderRadius: "50%", background: `radial-gradient(circle, ${COLORS.teal}18 0%, transparent 70%)`, top: -100, right: -100, pointerEvents: "none" }} />
       <div style={{ position: "absolute", width: 400, height: 400, borderRadius: "50%", background: `radial-gradient(circle, ${COLORS.blue}20 0%, transparent 70%)`, bottom: -80, left: -80, pointerEvents: "none" }} />
-
       <div style={{ width: "100%", maxWidth: 460, padding: "0 24px" }}>
-        {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 40 }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
             <div style={{ width: 48, height: 48, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -172,31 +193,38 @@ function AuthScreen({ onLogin }) {
           </div>
           <p style={{ color: COLORS.midGrey, fontSize: 15 }}>Workflow Management Platform</p>
         </div>
-
         <div style={{ background: "rgba(255,255,255,0.05)", backdropFilter: "blur(20px)", borderRadius: 24, border: "1px solid rgba(255,255,255,0.1)", padding: 40 }}>
+
           {step === "login" && (
             <div>
-              <h2 style={{ color: "#fff", fontSize: 24, fontWeight: 700, marginBottom: 8, textAlign: "center" }}>Welcome back</h2>
-              <p style={{ color: COLORS.midGrey, textAlign: "center", marginBottom: 32, fontSize: 14 }}>Sign in to continue to your workspace</p>
-              <button onClick={handleGoogleLogin} style={{ width: "100%", padding: "14px 20px", background: "#fff", border: "none", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 12, cursor: "pointer", fontWeight: 600, fontSize: 15, color: COLORS.navy, transition: "all 0.2s", boxShadow: "0 4px 20px rgba(0,0,0,0.3)" }}
-                onMouseEnter={e => e.target.style.transform = "translateY(-2px)"}
-                onMouseLeave={e => e.target.style.transform = "translateY(0)"}>
+              <h2 style={{ color: "#fff", fontSize: 24, fontWeight: 700, marginBottom: 8, textAlign: "center" }}>Welcome to FlowSync</h2>
+              <p style={{ color: COLORS.midGrey, textAlign: "center", marginBottom: 32, fontSize: 14 }}>Sign in with your Google account to continue</p>
+              <button onClick={handleGoogleLogin} disabled={loading}
+                style={{ width: "100%", padding: "14px 20px", background: "#fff", border: "none", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 12, cursor: loading ? "wait" : "pointer", fontWeight: 600, fontSize: 15, color: COLORS.navy, opacity: loading ? 0.8 : 1, boxShadow: "0 4px 20px rgba(0,0,0,0.3)" }}>
                 <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-                Continue with Google
+                {loading ? "Signing in..." : "Continue with Google"}
               </button>
-              <div style={{ marginTop: 24, padding: "16px", background: "rgba(13,191,191,0.08)", borderRadius: 10, border: `1px solid ${COLORS.teal}30` }}>
-                <p style={{ color: COLORS.tealLight, fontSize: 12, textAlign: "center", margin: 0 }}>🎭 Demo mode — select any user after login</p>
-              </div>
+              {error && <p style={{ color: COLORS.danger, fontSize: 13, textAlign: "center", marginTop: 16 }}>{error}</p>}
             </div>
           )}
 
           {step === "role" && (
             <div>
-              <h2 style={{ color: "#fff", fontSize: 22, fontWeight: 700, marginBottom: 8, textAlign: "center" }}>I am a...</h2>
-              <p style={{ color: COLORS.midGrey, textAlign: "center", marginBottom: 28, fontSize: 14 }}>Select your role to continue</p>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, padding: "14px", background: "rgba(255,255,255,0.05)", borderRadius: 12 }}>
+                {firebaseUser?.photoURL
+                  ? <img src={firebaseUser.photoURL} style={{ width: 44, height: 44, borderRadius: "50%" }} />
+                  : <Avatar initials={(firebaseUser?.displayName||"U").slice(0,2).toUpperCase()} size={44} />}
+                <div>
+                  <div style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>{firebaseUser?.displayName}</div>
+                  <div style={{ color: COLORS.midGrey, fontSize: 13 }}>{firebaseUser?.email}</div>
+                </div>
+              </div>
+              <h2 style={{ color: "#fff", fontSize: 20, fontWeight: 700, marginBottom: 8, textAlign: "center" }}>How will you use FlowSync?</h2>
+              <p style={{ color: COLORS.midGrey, textAlign: "center", marginBottom: 24, fontSize: 14 }}>Choose your role to get started</p>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 {[{ role: "manager", icon: "star", label: "Manager", desc: "Lead teams & assign tasks" }, { role: "employee", icon: "user", label: "Employee", desc: "View & complete tasks" }].map(r => (
-                  <button key={r.role} onClick={() => handleRoleSelect(r.role)} style={{ padding: "24px 16px", background: "rgba(255,255,255,0.05)", border: `2px solid ${COLORS.teal}40`, borderRadius: 16, cursor: "pointer", color: "#fff", textAlign: "center", transition: "all 0.2s" }}
+                  <button key={r.role} onClick={() => handleRoleSelect(r.role)}
+                    style={{ padding: "24px 16px", background: "rgba(255,255,255,0.05)", border: `2px solid ${COLORS.teal}40`, borderRadius: 16, cursor: "pointer", color: "#fff", textAlign: "center", transition: "all 0.2s" }}
                     onMouseEnter={e => { e.currentTarget.style.background = `${COLORS.teal}15`; e.currentTarget.style.borderColor = COLORS.teal; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.borderColor = `${COLORS.teal}40`; }}>
                     <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Icon name={r.icon} size={28} color={COLORS.teal} /></div>
@@ -205,32 +233,13 @@ function AuthScreen({ onLogin }) {
                   </button>
                 ))}
               </div>
+              <button onClick={() => { signOut(auth); setStep("login"); setFirebaseUser(null); }}
+                style={{ width: "100%", marginTop: 16, padding: "10px", background: "transparent", border: "none", color: COLORS.midGrey, fontSize: 13, cursor: "pointer" }}>
+                ← Use a different account
+              </button>
             </div>
           )}
 
-          {step === "user" && (
-            <div>
-              <button onClick={() => setStep("role")} style={{ background: "none", border: "none", color: COLORS.teal, cursor: "pointer", fontSize: 13, marginBottom: 20, display: "flex", alignItems: "center", gap: 6 }}>
-                ← Back
-              </button>
-              <h2 style={{ color: "#fff", fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Select your profile</h2>
-              <p style={{ color: COLORS.midGrey, marginBottom: 24, fontSize: 14 }}>Choose a demo account to explore</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {allUsers.map(u => (
-                  <button key={u.id} onClick={() => handleUserSelect(u)} style={{ padding: "14px 16px", background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.1)`, borderRadius: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 14, transition: "all 0.2s", width: "100%" }}
-                    onMouseEnter={e => { e.currentTarget.style.background = `${COLORS.teal}15`; e.currentTarget.style.borderColor = COLORS.teal; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; }}>
-                    <Avatar initials={u.avatar} size={42} />
-                    <div style={{ textAlign: "left" }}>
-                      <div style={{ color: "#fff", fontWeight: 600, fontSize: 15 }}>{u.name}</div>
-                      <div style={{ color: COLORS.midGrey, fontSize: 12 }}>{u.email}</div>
-                    </div>
-                    <div style={{ marginLeft: "auto" }}><Icon name="chevronRight" size={16} color={COLORS.midGrey} /></div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
