@@ -1639,7 +1639,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
-        onLogout={() => setUser(null)}
+        onLogout={() => { signOut(auth); setUser(null); }}
         notifications={notifications}
         mobileOpen={mobileMenuOpen}
         setMobileOpen={setMobileMenuOpen}
