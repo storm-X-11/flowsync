@@ -1,16 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
+import { auth, googleProvider } from "./firebase";
+import { signInWithPopup, signOut } from "firebase/auth";
 
-// ── Firebase setup ──
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MSG_ID",
-  appId: "YOUR_APP_ID"
-};
+// ── Admin credentials (change these to whatever you want) ──
+const ADMIN_EMAIL    = "admin@flowsync.app";
+const ADMIN_PASSWORD = "Admin@1234";
 
 // ─── Palette & Design Tokens ─────────────────────────────────────────────────
 const COLORS = {
@@ -143,103 +137,209 @@ const Icon = ({ name, size = 18, color = "currentColor" }) => {
 
 // ─── Auth Screen ──────────────────────────────────────────────────────────────
 function AuthScreen({ onLogin }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [step, setStep]               = useState("login");
   const [firebaseUser, setFirebaseUser] = useState(null);
-  const [step, setStep] = useState("login");
-  const [selectedRole, setSelectedRole] = useState(null);
+  const [loading, setLoading]         = useState(false);
+  const [googleError, setGoogleError] = useState("");
+  const [adminEmail, setAdminEmail]   = useState("");
+  const [adminPass, setAdminPass]     = useState("");
+  const [adminError, setAdminError]   = useState("");
+  const [showAdmin, setShowAdmin]     = useState(false);
+  const [showPass, setShowPass]       = useState(false);
 
   const handleGoogleLogin = async () => {
+    setGoogleError("");
     setLoading(true);
-    setError("");
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      const u = result.user;
-      setFirebaseUser(u);
-      setStep("role");
+      if (result && result.user) {
+        setFirebaseUser(result.user);
+        setStep("role");
+      }
     } catch (err) {
-      setError("Login failed. Please try again.");
+      console.error("Google login error:", err.code, err.message);
+      if (err.code === "auth/popup-blocked") {
+        setGoogleError("Popup was blocked. Please allow popups for this site in your browser settings, then try again.");
+      } else if (err.code === "auth/unauthorized-domain") {
+        setGoogleError("This domain is not authorized. Add flowsync-mu.vercel.app to Firebase authorized domains.");
+      } else if (err.code === "auth/cancelled-popup-request" || err.code === "auth/popup-closed-by-user") {
+        setGoogleError("Sign-in was cancelled. Please try again.");
+      } else {
+        setGoogleError("Login failed: " + (err.message || "Unknown error. Check Firebase authorized domains."));
+      }
     }
     setLoading(false);
   };
 
   const handleRoleSelect = (role) => {
-    setSelectedRole(role);
     const u = firebaseUser;
     const nameParts = (u.displayName || u.email).split(" ");
-    const initials = nameParts.map(w => w[0]).join("").slice(0,2).toUpperCase();
+    const initials = nameParts.map(w => w[0]).join("").slice(0, 2).toUpperCase();
     onLogin({
       id: u.uid,
       name: u.displayName || u.email.split("@")[0],
       email: u.email,
       avatar: initials,
-      role: role,
+      role,
       photoUrl: u.photoURL || null,
       teamId: null,
     });
   };
 
+  const handleAdminLogin = () => {
+    setAdminError("");
+    if (!adminEmail.trim()) { setAdminError("Enter your admin email."); return; }
+    if (!adminPass)          { setAdminError("Enter your password."); return; }
+    if (adminEmail.trim().toLowerCase() === ADMIN_EMAIL && adminPass === ADMIN_PASSWORD) {
+      onLogin({ id: "admin", name: "Admin", email: ADMIN_EMAIL, avatar: "AD", role: "admin", teamId: null });
+    } else {
+      setAdminError("Wrong email or password.");
+    }
+  };
+
+  const inputStyle = {
+    width: "100%", padding: "12px 14px",
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: 10, color: "#fff", fontSize: 14, outline: "none",
+    boxSizing: "border-box", fontFamily: "inherit",
+  };
+
+
+
   return (
     <div style={{ minHeight: "100vh", background: `linear-gradient(135deg, ${COLORS.navy} 0%, ${COLORS.navyLight} 50%, ${COLORS.navyMid} 100%)`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", position: "relative", overflow: "hidden" }}>
       <div style={{ position: "absolute", width: 500, height: 500, borderRadius: "50%", background: `radial-gradient(circle, ${COLORS.teal}18 0%, transparent 70%)`, top: -100, right: -100, pointerEvents: "none" }} />
       <div style={{ position: "absolute", width: 400, height: 400, borderRadius: "50%", background: `radial-gradient(circle, ${COLORS.blue}20 0%, transparent 70%)`, bottom: -80, left: -80, pointerEvents: "none" }} />
+
       <div style={{ width: "100%", maxWidth: 460, padding: "0 24px" }}>
-        <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        {/* Logo */}
+        <div style={{ textAlign: "center", marginBottom: 36 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
             <div style={{ width: 48, height: 48, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="zap" size={24} color="#fff" />
             </div>
             <span style={{ fontSize: 28, fontWeight: 800, color: "#fff", letterSpacing: "-0.5px" }}>FlowSync</span>
           </div>
-          <p style={{ color: COLORS.midGrey, fontSize: 15 }}>Workflow Management Platform</p>
+          <p style={{ color: COLORS.midGrey, fontSize: 14 }}>Workflow Management Platform</p>
         </div>
-        <div style={{ background: "rgba(255,255,255,0.05)", backdropFilter: "blur(20px)", borderRadius: 24, border: "1px solid rgba(255,255,255,0.1)", padding: 40 }}>
 
-          {step === "login" && (
+        <div style={{ background: "rgba(255,255,255,0.05)", backdropFilter: "blur(20px)", borderRadius: 24, border: "1px solid rgba(255,255,255,0.1)", padding: 36 }}>
+
+          {/* ── Google login step ── */}
+          {step === "login" && !showAdmin && (
             <div>
-              <h2 style={{ color: "#fff", fontSize: 24, fontWeight: 700, marginBottom: 8, textAlign: "center" }}>Welcome to FlowSync</h2>
-              <p style={{ color: COLORS.midGrey, textAlign: "center", marginBottom: 32, fontSize: 14 }}>Sign in with your Google account to continue</p>
+              <h2 style={{ color: "#fff", fontSize: 22, fontWeight: 700, marginBottom: 6, textAlign: "center" }}>Welcome back</h2>
+              <p style={{ color: COLORS.midGrey, textAlign: "center", marginBottom: 28, fontSize: 14 }}>Sign in with your Google account</p>
+
               <button onClick={handleGoogleLogin} disabled={loading}
-                style={{ width: "100%", padding: "14px 20px", background: "#fff", border: "none", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 12, cursor: loading ? "wait" : "pointer", fontWeight: 600, fontSize: 15, color: COLORS.navy, opacity: loading ? 0.8 : 1, boxShadow: "0 4px 20px rgba(0,0,0,0.3)" }}>
-                <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-                {loading ? "Signing in..." : "Continue with Google"}
+                style={{ width: "100%", padding: "14px 20px", background: loading ? "#f5f5f5" : "#fff", border: "none", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 12, cursor: loading ? "wait" : "pointer", fontWeight: 600, fontSize: 15, color: COLORS.navy, boxShadow: "0 4px 20px rgba(0,0,0,0.3)", marginBottom: 14, opacity: loading ? 0.8 : 1, transition: "all 0.2s" }}>
+                {loading ? (
+                  <div style={{ width: 20, height: 20, border: "2px solid #ccc", borderTopColor: COLORS.blue, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                )}
+                {loading ? "Opening Google sign-in..." : "Continue with Google"}
               </button>
-              {error && <p style={{ color: COLORS.danger, fontSize: 13, textAlign: "center", marginTop: 16 }}>{error}</p>}
+              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+              {googleError && (
+                <div style={{ padding: "10px 14px", background: `${COLORS.danger}15`, border: `1px solid ${COLORS.danger}40`, borderRadius: 10, marginBottom: 14 }}>
+                  <p style={{ color: COLORS.danger, fontSize: 13, margin: 0 }}>{googleError}</p>
+                </div>
+              )}
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.1)" }} />
+                <span style={{ color: COLORS.midGrey, fontSize: 12 }}>or</span>
+                <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.1)" }} />
+              </div>
+
+              <button onClick={() => setShowAdmin(true)}
+                style={{ width: "100%", padding: "12px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 12, cursor: "pointer", color: COLORS.midGrey, fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <Icon name="star" size={16} color={COLORS.teal} /> Admin Login
+              </button>
             </div>
           )}
 
-          {step === "role" && (
+          {/* ── Admin login form ── */}
+          {step === "login" && showAdmin && (
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, padding: "14px", background: "rgba(255,255,255,0.05)", borderRadius: 12 }}>
-                {firebaseUser?.photoURL
-                  ? <img src={firebaseUser.photoURL} style={{ width: 44, height: 44, borderRadius: "50%" }} />
-                  : <Avatar initials={(firebaseUser?.displayName||"U").slice(0,2).toUpperCase()} size={44} />}
+              <button onClick={() => { setShowAdmin(false); setAdminError(""); }} style={{ background: "none", border: "none", color: COLORS.teal, cursor: "pointer", fontSize: 13, marginBottom: 18, display: "flex", alignItems: "center", gap: 6 }}>
+                ← Back
+              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22 }}>
+                <div style={{ width: 42, height: 42, background: `linear-gradient(135deg, ${COLORS.teal}30, ${COLORS.blue}30)`, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icon name="star" size={20} color={COLORS.teal} />
+                </div>
                 <div>
-                  <div style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>{firebaseUser?.displayName}</div>
-                  <div style={{ color: COLORS.midGrey, fontSize: 13 }}>{firebaseUser?.email}</div>
+                  <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Admin Login</div>
+                  <div style={{ color: COLORS.midGrey, fontSize: 12 }}>Full access to all app data</div>
                 </div>
               </div>
-              <h2 style={{ color: "#fff", fontSize: 20, fontWeight: 700, marginBottom: 8, textAlign: "center" }}>How will you use FlowSync?</h2>
-              <p style={{ color: COLORS.midGrey, textAlign: "center", marginBottom: 24, fontSize: 14 }}>Choose your role to get started</p>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+
+              <label style={{ color: COLORS.midGrey, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>Admin Email</label>
+              <input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)}
+                placeholder="admin@flowsync.app" style={{ ...inputStyle, marginBottom: 14 }}
+                onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
+
+              <label style={{ color: COLORS.midGrey, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>Password</label>
+              <div style={{ position: "relative", marginBottom: 14 }}>
+                <input type={showPass ? "text" : "password"} value={adminPass} onChange={e => setAdminPass(e.target.value)}
+                  placeholder="Enter admin password" style={{ ...inputStyle, paddingRight: 44 }}
+                  onKeyDown={e => e.key === "Enter" && handleAdminLogin()} />
+                <button onClick={() => setShowPass(!showPass)} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: COLORS.midGrey, fontSize: 13 }}>
+                  {showPass ? "Hide" : "Show"}
+                </button>
+              </div>
+
+              {adminError && (
+                <div style={{ padding: "10px 14px", background: `${COLORS.danger}15`, border: `1px solid ${COLORS.danger}40`, borderRadius: 10, marginBottom: 14 }}>
+                  <p style={{ color: COLORS.danger, fontSize: 13, margin: 0 }}>{adminError}</p>
+                </div>
+              )}
+
+              <button onClick={handleAdminLogin}
+                style={{ width: "100%", padding: "13px", background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, border: "none", borderRadius: 12, cursor: "pointer", color: "#fff", fontWeight: 700, fontSize: 15 }}>
+                Sign In as Admin
+              </button>
+            </div>
+          )}
+
+          {/* ── Role select after Google login ── */}
+          {step === "role" && (
+            <div>
+              {firebaseUser && (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 22, padding: "12px 14px", background: "rgba(255,255,255,0.06)", borderRadius: 12 }}>
+                  {firebaseUser.photoURL
+                    ? <img src={firebaseUser.photoURL} alt="avatar" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover" }} />
+                    : <Avatar initials={(firebaseUser.displayName || "U").slice(0, 2).toUpperCase()} size={44} />}
+                  <div>
+                    <div style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>{firebaseUser.displayName}</div>
+                    <div style={{ color: COLORS.midGrey, fontSize: 13 }}>{firebaseUser.email}</div>
+                  </div>
+                </div>
+              )}
+              <h2 style={{ color: "#fff", fontSize: 20, fontWeight: 700, marginBottom: 6, textAlign: "center" }}>How will you use FlowSync?</h2>
+              <p style={{ color: COLORS.midGrey, textAlign: "center", marginBottom: 22, fontSize: 14 }}>Choose your role to get started</p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
                 {[{ role: "manager", icon: "star", label: "Manager", desc: "Lead teams & assign tasks" }, { role: "employee", icon: "user", label: "Employee", desc: "View & complete tasks" }].map(r => (
                   <button key={r.role} onClick={() => handleRoleSelect(r.role)}
-                    style={{ padding: "24px 16px", background: "rgba(255,255,255,0.05)", border: `2px solid ${COLORS.teal}40`, borderRadius: 16, cursor: "pointer", color: "#fff", textAlign: "center", transition: "all 0.2s" }}
+                    style={{ padding: "22px 14px", background: "rgba(255,255,255,0.05)", border: `2px solid ${COLORS.teal}40`, borderRadius: 16, cursor: "pointer", color: "#fff", textAlign: "center", transition: "all 0.2s" }}
                     onMouseEnter={e => { e.currentTarget.style.background = `${COLORS.teal}15`; e.currentTarget.style.borderColor = COLORS.teal; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.borderColor = `${COLORS.teal}40`; }}>
-                    <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Icon name={r.icon} size={28} color={COLORS.teal} /></div>
-                    <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>{r.label}</div>
+                    <div style={{ marginBottom: 10, display: "flex", justifyContent: "center" }}><Icon name={r.icon} size={26} color={COLORS.teal} /></div>
+                    <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{r.label}</div>
                     <div style={{ color: COLORS.midGrey, fontSize: 12 }}>{r.desc}</div>
                   </button>
                 ))}
               </div>
               <button onClick={() => { signOut(auth); setStep("login"); setFirebaseUser(null); }}
-                style={{ width: "100%", marginTop: 16, padding: "10px", background: "transparent", border: "none", color: COLORS.midGrey, fontSize: 13, cursor: "pointer" }}>
+                style={{ width: "100%", padding: "10px", background: "transparent", border: "none", color: COLORS.midGrey, fontSize: 13, cursor: "pointer" }}>
                 ← Use a different account
               </button>
             </div>
           )}
-
         </div>
       </div>
     </div>
@@ -1547,6 +1647,224 @@ function ProfileSection({ user, setUser, tasks, darkMode }) {
   );
 }
 
+
+// ─── Admin Dashboard ──────────────────────────────────────────────────────────
+function AdminDashboard({ onLogout }) {
+  const [activeSection, setActiveSection] = useState("overview");
+  const allManagers  = MOCK_USERS.managers;
+  const allEmployees = MOCK_USERS.employees;
+  const allTasks     = INITIAL_TASKS;
+  const completedTasks = allTasks.filter(t => t.status === "completed").length;
+  const ongoingTasks   = allTasks.filter(t => t.status === "ongoing").length;
+  const pendingTasks   = allTasks.filter(t => t.status === "pending").length;
+  const completionRate = allTasks.length ? Math.round((completedTasks / allTasks.length) * 100) : 0;
+
+  const sections = [
+    { id: "overview",   label: "Overview",   icon: "dashboard" },
+    { id: "managers",   label: "Managers",   icon: "star" },
+    { id: "employees",  label: "Employees",  icon: "team" },
+    { id: "tasks",      label: "All Tasks",  icon: "tasks" },
+  ];
+
+  const statCards = [
+    { label: "Total Managers",  value: allManagers.length,  color: COLORS.blue,    icon: "star" },
+    { label: "Total Employees", value: allEmployees.length, color: COLORS.teal,    icon: "team" },
+    { label: "Total Tasks",     value: allTasks.length,     color: COLORS.blue,    icon: "tasks" },
+    { label: "Completed Tasks", value: completedTasks,      color: COLORS.success, icon: "check" },
+    { label: "In Progress",     value: ongoingTasks,        color: COLORS.teal,    icon: "activity" },
+    { label: "Pending Tasks",   value: pendingTasks,        color: COLORS.warning, icon: "clock" },
+  ];
+
+  const rowStyle = { display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.07)" };
+  const cellLabel = { color: "#7BAAD0", fontSize: 12, fontWeight: 600, marginBottom: 2 };
+  const cellValue = { color: "#E8F0FF", fontSize: 13, fontWeight: 500 };
+
+  return (
+    <div style={{ minHeight: "100vh", background: COLORS.navy, fontFamily: "'DM Sans', sans-serif", display: "flex" }}>
+      {/* Admin sidebar */}
+      <div style={{ width: 220, background: COLORS.navyLight, borderRight: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", position: "fixed", height: "100vh" }}>
+        <div style={{ padding: "22px 18px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <div style={{ width: 34, height: 34, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Icon name="zap" size={17} color="#fff" />
+            </div>
+            <span style={{ color: "#fff", fontWeight: 800, fontSize: 16 }}>FlowSync</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: `${COLORS.teal}15`, borderRadius: 10, border: `1px solid ${COLORS.teal}30` }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "#fff" }}>AD</div>
+            <div>
+              <div style={{ color: "#fff", fontWeight: 700, fontSize: 13 }}>Admin</div>
+              <div style={{ color: COLORS.teal, fontSize: 11 }}>Super Admin</div>
+            </div>
+          </div>
+        </div>
+
+        <nav style={{ flex: 1, padding: "14px 10px" }}>
+          {sections.map(s => (
+            <button key={s.id} onClick={() => setActiveSection(s.id)}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 10, border: "none", cursor: "pointer", marginBottom: 4, background: activeSection === s.id ? `linear-gradient(135deg, ${COLORS.teal}22, ${COLORS.blue}22)` : "transparent", color: activeSection === s.id ? COLORS.teal : COLORS.midGrey, fontWeight: activeSection === s.id ? 700 : 400, fontSize: 14, textAlign: "left", transition: "all 0.18s" }}>
+              <Icon name={s.icon} size={17} color={activeSection === s.id ? COLORS.teal : COLORS.midGrey} />
+              {s.label}
+            </button>
+          ))}
+        </nav>
+
+        <div style={{ padding: "12px 10px", borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+          <button onClick={onLogout} style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 10, border: "none", cursor: "pointer", background: "transparent", color: COLORS.danger, fontSize: 14 }}>
+            <Icon name="logout" size={17} color={COLORS.danger} /> Sign Out
+          </button>
+        </div>
+      </div>
+
+      {/* Admin content */}
+      <div style={{ flex: 1, marginLeft: 220, padding: "32px 36px", maxWidth: 1000, boxSizing: "border-box" }}>
+
+        {/* ── Overview ── */}
+        {activeSection === "overview" && (
+          <div>
+            <h1 style={{ color: "#E8F0FF", fontSize: 24, fontWeight: 800, marginBottom: 6 }}>Admin Overview</h1>
+            <p style={{ color: "#7BAAD0", fontSize: 14, marginBottom: 28 }}>Full visibility into all FlowSync data</p>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 28 }}>
+              {statCards.map(s => (
+                <div key={s.label} style={{ background: "#112240", borderRadius: 16, padding: "20px", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                    <div style={{ width: 38, height: 38, background: `${s.color}18`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Icon name={s.icon} size={18} color={s.color} />
+                    </div>
+                    <span style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.value}</span>
+                  </div>
+                  <div style={{ color: "#E8F0FF", fontWeight: 600, fontSize: 13 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Completion rate */}
+            <div style={{ background: `linear-gradient(135deg, ${COLORS.navyMid}, ${COLORS.blue})`, borderRadius: 20, padding: "28px 32px", marginBottom: 24 }}>
+              <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, marginBottom: 8 }}>Platform Completion Rate</div>
+              <div style={{ fontSize: 56, fontWeight: 900, color: "#fff", lineHeight: 1, marginBottom: 14 }}>{completionRate}<span style={{ fontSize: 24 }}>%</span></div>
+              <div style={{ width: "100%", height: 8, background: "rgba(255,255,255,0.15)", borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ width: `${completionRate}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.teal}, ${COLORS.cyan})`, borderRadius: 4 }} />
+              </div>
+              <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, marginTop: 8 }}>{completedTasks} of {allTasks.length} tasks completed across all teams</div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Managers ── */}
+        {activeSection === "managers" && (
+          <div>
+            <h1 style={{ color: "#E8F0FF", fontSize: 24, fontWeight: 800, marginBottom: 6 }}>All Managers</h1>
+            <p style={{ color: "#7BAAD0", fontSize: 14, marginBottom: 24 }}>{allManagers.length} manager{allManagers.length !== 1 ? "s" : ""} registered</p>
+            <div style={{ background: "#112240", borderRadius: 16, border: "1px solid rgba(255,255,255,0.08)", overflow: "hidden" }}>
+              {/* Table header */}
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1fr", gap: 12, padding: "12px 20px", background: "rgba(255,255,255,0.04)", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                {["Manager", "Email", "Team ID", "Tasks", "Status"].map(h => (
+                  <div key={h} style={{ color: COLORS.teal, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</div>
+                ))}
+              </div>
+              {allManagers.map((m, i) => {
+                const mTasks = allTasks.filter(t => t.managerId === m.id);
+                const mCompleted = mTasks.filter(t => t.status === "completed").length;
+                const teamEmpCount = allEmployees.filter(e => e.teamId === m.teamId).length;
+                return (
+                  <div key={m.id} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1fr", gap: 12, padding: "16px 20px", borderBottom: i < allManagers.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none", alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <Avatar initials={m.avatar} size={36} />
+                      <div>
+                        <div style={{ color: "#E8F0FF", fontWeight: 600, fontSize: 14 }}>{m.name}</div>
+                        <div style={{ color: "#7BAAD0", fontSize: 11 }}>ID: {m.id}</div>
+                      </div>
+                    </div>
+                    <div style={{ color: "#7BAAD0", fontSize: 13 }}>{m.email}</div>
+                    <div style={{ color: "#E8F0FF", fontSize: 13 }}>{m.teamId || "—"}</div>
+                    <div>
+                      <div style={{ color: "#E8F0FF", fontSize: 13, fontWeight: 600 }}>{mCompleted}/{mTasks.length}</div>
+                      <div style={{ color: "#7BAAD0", fontSize: 11 }}>{teamEmpCount} members</div>
+                    </div>
+                    <div><Badge label="Active" bg={`${COLORS.success}22`} color={COLORS.success} /></div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Employees ── */}
+        {activeSection === "employees" && (
+          <div>
+            <h1 style={{ color: "#E8F0FF", fontSize: 24, fontWeight: 800, marginBottom: 6 }}>All Employees</h1>
+            <p style={{ color: "#7BAAD0", fontSize: 14, marginBottom: 24 }}>{allEmployees.length} employee{allEmployees.length !== 1 ? "s" : ""} registered</p>
+            <div style={{ background: "#112240", borderRadius: 16, border: "1px solid rgba(255,255,255,0.08)", overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1fr", gap: 12, padding: "12px 20px", background: "rgba(255,255,255,0.04)", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                {["Employee", "Email", "Team", "Tasks Done", "Status"].map(h => (
+                  <div key={h} style={{ color: COLORS.teal, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</div>
+                ))}
+              </div>
+              {allEmployees.map((e, i) => {
+                const eTasks = allTasks.filter(t => t.assignedTo.includes(e.id));
+                const eDone  = eTasks.filter(t => t.status === "completed").length;
+                const manager = e.teamId ? allManagers.find(m => m.teamId === e.teamId) : null;
+                return (
+                  <div key={e.id} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1fr", gap: 12, padding: "16px 20px", borderBottom: i < allEmployees.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none", alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <Avatar initials={e.avatar} size={36} />
+                      <div>
+                        <div style={{ color: "#E8F0FF", fontWeight: 600, fontSize: 14 }}>{e.name}</div>
+                        <div style={{ color: "#7BAAD0", fontSize: 11 }}>ID: {e.id}</div>
+                      </div>
+                    </div>
+                    <div style={{ color: "#7BAAD0", fontSize: 13 }}>{e.email}</div>
+                    <div>
+                      <div style={{ color: "#E8F0FF", fontSize: 13 }}>{e.teamId || "No team"}</div>
+                      {manager && <div style={{ color: "#7BAAD0", fontSize: 11 }}>Mgr: {manager.name.split(" ")[0]}</div>}
+                    </div>
+                    <div style={{ color: "#E8F0FF", fontSize: 13, fontWeight: 600 }}>{eDone}/{eTasks.length}</div>
+                    <div><Badge label={e.teamId ? "In Team" : "Unassigned"} bg={e.teamId ? `${COLORS.success}22` : `${COLORS.warning}22`} color={e.teamId ? COLORS.success : COLORS.warning} /></div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── All Tasks ── */}
+        {activeSection === "tasks" && (
+          <div>
+            <h1 style={{ color: "#E8F0FF", fontSize: 24, fontWeight: 800, marginBottom: 6 }}>All Tasks</h1>
+            <p style={{ color: "#7BAAD0", fontSize: 14, marginBottom: 24 }}>{allTasks.length} tasks across all teams</p>
+            <div style={{ background: "#112240", borderRadius: 16, border: "1px solid rgba(255,255,255,0.08)", overflow: "hidden" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 12, padding: "12px 20px", background: "rgba(255,255,255,0.04)", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                {["Task", "Priority", "Status", "Deadline", "Assigned"].map(h => (
+                  <div key={h} style={{ color: COLORS.teal, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</div>
+                ))}
+              </div>
+              {allTasks.map((t, i) => {
+                const assignees = t.assignedTo.map(id => allEmployees.find(e => e.id === id)).filter(Boolean);
+                return (
+                  <div key={t.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 12, padding: "14px 20px", borderBottom: i < allTasks.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none", alignItems: "center" }}>
+                    <div>
+                      <div style={{ color: "#E8F0FF", fontWeight: 600, fontSize: 13 }}>{t.title}</div>
+                      {t.category && <div style={{ color: "#7BAAD0", fontSize: 11 }}>{t.category}</div>}
+                    </div>
+                    <div><Badge label={t.priority} bg={`${getPriorityColor(t.priority)}30`} color={getPriorityColor(t.priority)} /></div>
+                    <div><Badge label={getStatusLabel(t.status)} bg={`${getStatusColor(t.status)}22`} color={getStatusColor(t.status)} /></div>
+                    <div style={{ color: "#7BAAD0", fontSize: 12 }}>{formatDate(t.deadline)}</div>
+                    <div style={{ display: "flex", gap: -4 }}>
+                      {assignees.slice(0, 3).map((a, idx) => <div key={a.id} style={{ marginLeft: idx > 0 ? -6 : 0 }}><Avatar initials={a.avatar} size={24} /></div>)}
+                      {assignees.length === 0 && <span style={{ color: "#7BAAD0", fontSize: 12 }}>None</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
@@ -1578,6 +1896,7 @@ export default function App() {
   const textPrimary = darkMode ? "#fff" : COLORS.navy;
 
   if (!user) return <AuthScreen onLogin={u => { setUser(u); setActiveTab("dashboard"); }} />;
+  if (user.role === "admin") return <AdminDashboard onLogout={() => { try { signOut(auth); } catch(e){} setUser(null); }} />;
 
   const renderContent = () => {
     if (user.role === "manager") {
@@ -1639,7 +1958,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
-        onLogout={() => { signOut(auth); setUser(null); }}
+        onLogout={() => { try { signOut(auth); } catch(e){} setUser(null); }}
         notifications={notifications}
         mobileOpen={mobileMenuOpen}
         setMobileOpen={setMobileMenuOpen}
