@@ -127,6 +127,11 @@ const Icon = ({ name, size = 18, color = "currentColor" }) => {
     chevronRight: <><polyline points="9 18 15 12 9 6"/></>,
     menu: <><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></>,
     zap: <><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></>,
+    settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></>,
+    shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>,
+    eyeOff: <><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>,
+    eye: <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>,
+    alertTriangle: <><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -357,6 +362,7 @@ function Sidebar({ user, activeTab, setActiveTab, darkMode, setDarkMode, onLogou
     { id: "analytics", icon: "analytics", label: "Analytics" },
     { id: "notifications", icon: "bell", label: "Notifications", badge: unread },
     { id: "profile", icon: "user", label: "Profile" },
+    { id: "settings", icon: "settings", label: "Settings" },
   ];
   const employeeNav = [
     { id: "dashboard", icon: "dashboard", label: "Dashboard" },
@@ -365,6 +371,7 @@ function Sidebar({ user, activeTab, setActiveTab, darkMode, setDarkMode, onLogou
     { id: "activity", icon: "activity", label: "Activity" },
     { id: "notifications", icon: "bell", label: "Notifications", badge: unread },
     { id: "profile", icon: "user", label: "Profile" },
+    { id: "settings", icon: "settings", label: "Settings" },
   ];
   const nav = user.role === "manager" ? managerNav : employeeNav;
   const bg = darkMode ? COLORS.navy : COLORS.navyLight;
@@ -1865,17 +1872,297 @@ function AdminDashboard({ onLogout }) {
   );
 }
 
+// ─── Settings & Delete Account ────────────────────────────────────────────────
+function SettingsPage({ user, setUser, onLogout, darkMode }) {
+  const [section, setSection] = useState("main"); // main | yourinfo | deleteconfirm
+  const [deletePass, setDeletePass] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [deleted, setDeleted] = useState(false);
+
+  const cardBg     = darkMode ? "#112240" : "#fff";
+  const cardBorder = darkMode ? "rgba(255,255,255,0.10)" : COLORS.softGrey;
+  const inputBg    = darkMode ? "#0A1628" : COLORS.offWhite;
+  const inputBorder= darkMode ? "rgba(255,255,255,0.14)" : "#C8D8EC";
+  const textPrimary   = darkMode ? "#E8F0FF" : COLORS.navy;
+  const textSecondary = darkMode ? "#7BAAD0" : COLORS.darkGrey;
+  const divider    = darkMode ? "rgba(255,255,255,0.07)" : COLORS.softGrey;
+
+  const CONFIRM_PASSWORD = "Delete@" + (user.name.split(" ")[0] || "User") + "123";
+
+  const handleDeleteConfirm = () => {
+    setDeleteError("");
+    if (!deletePass) { setDeleteError("Please enter your confirmation password."); return; }
+    if (deletePass !== CONFIRM_PASSWORD) {
+      setDeleteError("Incorrect password. Check the hint above.");
+      return;
+    }
+    // Wipe all localStorage data for this user
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith("fs_") || k === "fs_user" || k === "fs_tasks" || k === "fs_invitations" || k === "fs_notifications")) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    setDeleted(true);
+    setTimeout(() => {
+      try { signOut(auth); } catch(e) {}
+      setUser(null);
+    }, 2000);
+  };
+
+  if (deleted) return (
+    <div style={{ textAlign: "center", padding: "80px 24px" }}>
+      <div style={{ fontSize: 48, marginBottom: 16 }}>👋</div>
+      <h2 style={{ color: textPrimary, fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Account Deleted</h2>
+      <p style={{ color: textSecondary, fontSize: 14 }}>All your data has been removed. Redirecting...</p>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+        {section !== "main" && (
+          <button onClick={() => { setSection(section === "deleteconfirm" ? "yourinfo" : "main"); setDeleteError(""); setDeletePass(""); }}
+            style={{ background: darkMode ? "rgba(255,255,255,0.06)" : COLORS.softGrey, border: "none", borderRadius: 8, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <Icon name="chevronRight" size={16} color={textSecondary} style={{ transform: "rotate(180deg)" }} />
+          </button>
+        )}
+        <h2 style={{ color: textPrimary, fontSize: 22, fontWeight: 800 }}>
+          {section === "main" ? "Settings" : section === "yourinfo" ? "Your Info" : "Delete Account"}
+        </h2>
+      </div>
+
+      {/* ── Main settings menu ── */}
+      {section === "main" && (
+        <div style={{ background: cardBg, borderRadius: 16, border: `1px solid ${cardBorder}`, overflow: "hidden" }}>
+          {[
+            { id: "yourinfo", icon: "user", label: "Your Info", desc: "Manage your account data", color: COLORS.blue },
+            { id: "notifications_pref", icon: "bell", label: "Notifications", desc: "Email and push preferences", color: COLORS.teal },
+            { id: "privacy", icon: "shield", label: "Privacy & Security", desc: "Control your privacy settings", color: COLORS.success },
+          ].map((item, idx) => (
+            <button key={item.id} onClick={() => item.id === "yourinfo" && setSection("yourinfo")}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "16px 20px", background: "transparent", border: "none", borderBottom: `1px solid ${divider}`, cursor: "pointer", textAlign: "left", transition: "background 0.15s" }}
+              onMouseEnter={e => e.currentTarget.style.background = darkMode ? "rgba(255,255,255,0.04)" : "#f8faff"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: `${item.color}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Icon name={item.icon} size={18} color={item.color} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: textPrimary, fontWeight: 600, fontSize: 14 }}>{item.label}</div>
+                <div style={{ color: textSecondary, fontSize: 12 }}>{item.desc}</div>
+              </div>
+              <Icon name="chevronRight" size={16} color={textSecondary} />
+            </button>
+          ))}
+          {/* Sign out */}
+          <button onClick={onLogout}
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "16px 20px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}
+            onMouseEnter={e => e.currentTarget.style.background = `${COLORS.danger}08`}
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+            <div style={{ width: 38, height: 38, borderRadius: 10, background: `${COLORS.danger}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon name="logout" size={18} color={COLORS.danger} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: COLORS.danger, fontWeight: 600, fontSize: 14 }}>Sign Out</div>
+              <div style={{ color: textSecondary, fontSize: 12 }}>Log out of your account</div>
+            </div>
+          </button>
+        </div>
+      )}
+
+      {/* ── Your Info ── */}
+      {section === "yourinfo" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Info card */}
+          <div style={{ background: cardBg, borderRadius: 16, border: `1px solid ${cardBorder}`, padding: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20, paddingBottom: 16, borderBottom: `1px solid ${divider}` }}>
+              {user.photoUrl
+                ? <img src={user.photoUrl} alt="avatar" style={{ width: 56, height: 56, borderRadius: "50%", objectFit: "cover", border: `2px solid ${COLORS.teal}` }} />
+                : <Avatar initials={user.avatar} size={56} />}
+              <div>
+                <div style={{ color: textPrimary, fontWeight: 800, fontSize: 17 }}>{user.name}</div>
+                <div style={{ color: COLORS.teal, fontSize: 13, textTransform: "capitalize" }}>{user.role}</div>
+                <div style={{ color: textSecondary, fontSize: 12 }}>{user.email}</div>
+              </div>
+            </div>
+            {[
+              { label: "User ID", value: user.id },
+              { label: "Email", value: user.email },
+              { label: "Role", value: user.role },
+              { label: "Team", value: user.teamId || "Not assigned" },
+              { label: "Department", value: user.department || "—" },
+              { label: "Location", value: user.location || "—" },
+              { label: "Phone", value: user.phone || "—" },
+            ].map(item => (
+              <div key={item.label} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${divider}` }}>
+                <span style={{ color: textSecondary, fontSize: 13 }}>{item.label}</span>
+                <span style={{ color: textPrimary, fontSize: 13, fontWeight: 500, maxWidth: "60%", textAlign: "right", wordBreak: "break-all" }}>{item.value}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Stored data summary */}
+          <div style={{ background: `${COLORS.teal}08`, borderRadius: 14, border: `1px solid ${COLORS.teal}25`, padding: "16px 20px" }}>
+            <div style={{ color: textPrimary, fontWeight: 600, fontSize: 14, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon name="activity" size={15} color={COLORS.teal} /> Data stored on this device
+            </div>
+            <div style={{ color: textSecondary, fontSize: 13, lineHeight: 1.7 }}>
+              Your tasks, team info, and preferences are saved locally in your browser so they persist after logout.
+            </div>
+          </div>
+
+          {/* Delete Account button */}
+          <button onClick={() => setSection("deleteconfirm")}
+            style={{ width: "100%", padding: "14px", background: `${COLORS.danger}10`, border: `1px solid ${COLORS.danger}40`, borderRadius: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, transition: "all 0.2s" }}
+            onMouseEnter={e => e.currentTarget.style.background = `${COLORS.danger}18`}
+            onMouseLeave={e => e.currentTarget.style.background = `${COLORS.danger}10`}>
+            <Icon name="trash" size={18} color={COLORS.danger} />
+            <span style={{ color: COLORS.danger, fontWeight: 700, fontSize: 15 }}>Delete My Account</span>
+          </button>
+        </div>
+      )}
+
+      {/* ── Delete Confirm ── */}
+      {section === "deleteconfirm" && (
+        <div>
+          <div style={{ background: `${COLORS.danger}10`, border: `1px solid ${COLORS.danger}40`, borderRadius: 16, padding: "20px", marginBottom: 20, display: "flex", gap: 14 }}>
+            <Icon name="alertTriangle" size={24} color={COLORS.danger} />
+            <div>
+              <div style={{ color: COLORS.danger, fontWeight: 700, fontSize: 15, marginBottom: 6 }}>This action cannot be undone</div>
+              <div style={{ color: textSecondary, fontSize: 13, lineHeight: 1.6 }}>
+                Deleting your account will permanently remove all your tasks, team memberships, notifications, and preferences from this device.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ background: cardBg, borderRadius: 16, border: `1px solid ${cardBorder}`, padding: "24px" }}>
+            <div style={{ color: textPrimary, fontWeight: 700, fontSize: 15, marginBottom: 6 }}>Confirm your identity</div>
+            <div style={{ background: `${COLORS.blue}10`, border: `1px solid ${COLORS.blue}25`, borderRadius: 10, padding: "12px 16px", marginBottom: 20 }}>
+              <div style={{ color: textSecondary, fontSize: 12, marginBottom: 4 }}>Your confirmation password is:</div>
+              <div style={{ color: COLORS.teal, fontWeight: 700, fontSize: 14, fontFamily: "monospace" }}>Delete@{user.name.split(" ")[0] || "User"}123</div>
+            </div>
+
+            <label style={{ color: textSecondary, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 8 }}>Enter confirmation password</label>
+            <div style={{ position: "relative", marginBottom: 16 }}>
+              <input
+                type={showPass ? "text" : "password"}
+                value={deletePass}
+                onChange={e => { setDeletePass(e.target.value); setDeleteError(""); }}
+                placeholder="Enter password to confirm"
+                style={{ width: "100%", padding: "12px 44px 12px 14px", background: inputBg, border: `1px solid ${deleteError ? COLORS.danger : inputBorder}`, borderRadius: 10, color: textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+                onKeyDown={e => e.key === "Enter" && handleDeleteConfirm()}
+              />
+              <button onClick={() => setShowPass(!showPass)} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: textSecondary }}>
+                <Icon name={showPass ? "eyeOff" : "eye"} size={16} color={textSecondary} />
+              </button>
+            </div>
+
+            {deleteError && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: `${COLORS.danger}12`, border: `1px solid ${COLORS.danger}30`, borderRadius: 8, marginBottom: 16 }}>
+                <Icon name="x" size={14} color={COLORS.danger} />
+                <span style={{ color: COLORS.danger, fontSize: 13 }}>{deleteError}</span>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 12 }}>
+              <button onClick={handleDeleteConfirm}
+                style={{ flex: 1, padding: "13px", background: COLORS.danger, border: "none", borderRadius: 12, cursor: "pointer", color: "#fff", fontWeight: 700, fontSize: 14 }}>
+                Yes, Delete Everything
+              </button>
+              <button onClick={() => { setSection("yourinfo"); setDeletePass(""); setDeleteError(""); }}
+                style={{ padding: "13px 20px", background: darkMode ? "rgba(255,255,255,0.06)" : COLORS.offWhite, border: `1px solid ${inputBorder}`, borderRadius: 12, cursor: "pointer", color: textSecondary, fontWeight: 600, fontSize: 14 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [darkMode, setDarkMode] = useState(false);
-  const [activeTab, setActiveTab] = useState("dashboard");
-  const [tasks, setTasks] = useState(INITIAL_TASKS);
-  const [invitations, setInvitations] = useState(INITIAL_INVITATIONS);
-  const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
+  // ── Restore session from localStorage ──
+  const loadState = (key, fallback) => {
+    try {
+      const v = localStorage.getItem("fs_" + key);
+      return v ? JSON.parse(v) : fallback;
+    } catch { return fallback; }
+  };
+
+  const [user, setUserRaw]          = useState(() => loadState("user", null));
+  const [darkMode, setDarkMode]     = useState(() => loadState("darkMode", false));
+  const [activeTab, setActiveTabRaw]= useState("dashboard");
+  const [tabHistory, setTabHistory] = useState(["dashboard"]);
+  const [tasks, setTasksRaw]        = useState(() => loadState("tasks", INITIAL_TASKS));
+  const [invitations, setInvRaw]    = useState(() => loadState("invitations", INITIAL_INVITATIONS));
+  const [notifications, setNotifsRaw] = useState(() => loadState("notifications", INITIAL_NOTIFICATIONS));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile]     = useState(false);
+
+  // ── Wrapped setters that also persist to localStorage ──
+  const setUser = (u) => {
+    setUserRaw(u);
+    try { if (u) localStorage.setItem("fs_user", JSON.stringify(u)); else localStorage.removeItem("fs_user"); } catch {}
+  };
+  const setTasks = (fn) => setTasksRaw(prev => {
+    const next = typeof fn === "function" ? fn(prev) : fn;
+    try { localStorage.setItem("fs_tasks", JSON.stringify(next)); } catch {}
+    return next;
+  });
+  const setInvitations = (fn) => setInvRaw(prev => {
+    const next = typeof fn === "function" ? fn(prev) : fn;
+    try { localStorage.setItem("fs_invitations", JSON.stringify(next)); } catch {}
+    return next;
+  });
+  const setNotifications = (fn) => setNotifsRaw(prev => {
+    const next = typeof fn === "function" ? fn(prev) : fn;
+    try { localStorage.setItem("fs_notifications", JSON.stringify(next)); } catch {}
+    return next;
+  });
+  const toggleDark = (v) => {
+    setDarkMode(v);
+    try { localStorage.setItem("fs_darkMode", JSON.stringify(v)); } catch {}
+  };
+
+  // ── Tab navigation with history ──
+  const setActiveTab = (tab) => {
+    setActiveTabRaw(tab);
+    setTabHistory(prev => {
+      const next = prev[prev.length - 1] === tab ? prev : [...prev, tab];
+      return next.slice(-10); // keep last 10
+    });
+    // Push a history state so browser back button fires popstate
+    window.history.pushState({ tab }, "", window.location.pathname);
+  };
+
+  // ── Browser/phone back button → go to previous tab, not browser back ──
+  useEffect(() => {
+    const handlePop = (e) => {
+      setTabHistory(prev => {
+        if (prev.length <= 1) {
+          // Already at root — push state again so they can't go further back
+          window.history.pushState({ tab: "dashboard" }, "", window.location.pathname);
+          setActiveTabRaw("dashboard");
+          return ["dashboard"];
+        }
+        const newHistory = prev.slice(0, -1);
+        const prevTab = newHistory[newHistory.length - 1];
+        setActiveTabRaw(prevTab);
+        window.history.pushState({ tab: prevTab }, "", window.location.pathname);
+        return newHistory;
+      });
+    };
+    window.addEventListener("popstate", handlePop);
+    // Push initial state
+    window.history.pushState({ tab: "dashboard" }, "", window.location.pathname);
+    return () => window.removeEventListener("popstate", handlePop);
+  }, []);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -1895,8 +2182,14 @@ export default function App() {
   const bg = darkMode ? COLORS.navy : COLORS.offWhite;
   const textPrimary = darkMode ? "#fff" : COLORS.navy;
 
-  if (!user) return <AuthScreen onLogin={u => { setUser(u); setActiveTab("dashboard"); }} />;
-  if (user.role === "admin") return <AdminDashboard onLogout={() => { try { signOut(auth); } catch(e){} setUser(null); }} />;
+  const handleLogout = () => {
+    try { signOut(auth); } catch(e) {}
+    localStorage.removeItem("fs_user");
+    setUserRaw(null);
+  };
+
+  if (!user) return <AuthScreen onLogin={u => { setUser(u); setActiveTabRaw("dashboard"); setTabHistory(["dashboard"]); }} />;
+  if (user.role === "admin") return <AdminDashboard onLogout={() => { try { signOut(auth); } catch(e){} localStorage.removeItem("fs_user"); setUserRaw(null); }} />;
 
   const renderContent = () => {
     if (user.role === "manager") {
@@ -1908,6 +2201,7 @@ export default function App() {
         case "analytics": return <Analytics user={user} tasks={tasks} darkMode={darkMode} />;
         case "notifications": return <NotificationsPanel user={user} notifications={notifications} setNotifications={setNotifications} darkMode={darkMode} />;
         case "profile": return <ProfileSection user={user} setUser={setUser} tasks={tasks} darkMode={darkMode} />;
+        case "settings": return <SettingsPage user={user} setUser={setUser} onLogout={handleLogout} darkMode={darkMode} />;
         default: return null;
       }
     } else {
@@ -1942,23 +2236,24 @@ export default function App() {
         case "activity": return <ActivityLog user={user} tasks={tasks} darkMode={darkMode} />;
         case "notifications": return <NotificationsPanel user={user} notifications={notifications} setNotifications={setNotifications} darkMode={darkMode} />;
         case "profile": return <ProfileSection user={user} setUser={setUser} tasks={tasks} darkMode={darkMode} />;
+        case "settings": return <SettingsPage user={user} setUser={setUser} onLogout={handleLogout} darkMode={darkMode} />;
         default: return null;
       }
     }
   };
 
   const desktopSidebarWidth = sidebarCollapsed ? 64 : 240;
+  const showBackBtn = tabHistory.length > 1 && activeTab !== "dashboard";
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: bg, fontFamily: "'DM Sans', sans-serif", transition: "background 0.3s" }}>
-      {/* Single Sidebar for both mobile and desktop */}
       <Sidebar
         user={user}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         darkMode={darkMode}
-        setDarkMode={setDarkMode}
-        onLogout={() => { try { signOut(auth); } catch(e){} setUser(null); }}
+        setDarkMode={toggleDark}
+        onLogout={handleLogout}
         notifications={notifications}
         mobileOpen={mobileMenuOpen}
         setMobileOpen={setMobileMenuOpen}
@@ -1967,31 +2262,54 @@ export default function App() {
         isMobile={isMobile}
       />
 
-      {/* Main content — shifts right by sidebar width on desktop */}
-      <main style={{
-        flex: 1,
-        marginLeft: isMobile ? 0 : desktopSidebarWidth,
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        transition: "margin-left 0.25s ease",
-      }}>
-        {/* Mobile top bar */}
-        {isMobile && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 20px", background: darkMode ? COLORS.navyLight : "#fff", borderBottom: `1px solid ${darkMode ? "rgba(255,255,255,0.08)" : COLORS.softGrey}`, position: "sticky", top: 0, zIndex: 50 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 30, height: 30, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <main style={{ flex: 1, marginLeft: isMobile ? 0 : desktopSidebarWidth, minHeight: "100vh", display: "flex", flexDirection: "column", transition: "margin-left 0.25s ease" }}>
+        {/* Top bar — always visible, with back button */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 16px" : "14px 32px", background: darkMode ? COLORS.navyLight : "#fff", borderBottom: `1px solid ${darkMode ? "rgba(255,255,255,0.08)" : COLORS.softGrey}`, position: "sticky", top: 0, zIndex: 50, gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {/* Back button */}
+            {showBackBtn ? (
+              <button onClick={() => {
+                setTabHistory(prev => {
+                  const newH = prev.slice(0, -1);
+                  const prevTab = newH[newH.length - 1] || "dashboard";
+                  setActiveTabRaw(prevTab);
+                  return newH;
+                });
+              }}
+                style={{ background: darkMode ? "rgba(255,255,255,0.08)" : COLORS.softGrey, border: "none", borderRadius: 8, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, transition: "background 0.18s" }}
+                onMouseEnter={e => e.currentTarget.style.background = darkMode ? "rgba(255,255,255,0.14)" : COLORS.softGrey}
+                onMouseLeave={e => e.currentTarget.style.background = darkMode ? "rgba(255,255,255,0.08)" : COLORS.softGrey}
+                title="Go back">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={textPrimary} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 18 9 12 15 6"/>
+                </svg>
+              </button>
+            ) : (
+              <div style={{ width: 34, height: 34, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <Icon name="zap" size={16} color="#fff" />
               </div>
-              <span style={{ color: textPrimary, fontWeight: 800, fontSize: 16 }}>FlowSync</span>
-            </div>
-            <button onClick={() => setMobileMenuOpen(o => !o)} style={{ background: darkMode ? "rgba(255,255,255,0.08)" : COLORS.softGrey, border: "none", borderRadius: 8, width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-              <Icon name={mobileMenuOpen ? "x" : "menu"} size={20} color={textPrimary} />
-            </button>
+            )}
+            <span style={{ color: textPrimary, fontWeight: 800, fontSize: isMobile ? 16 : 17 }}>
+              {showBackBtn
+                ? { tasks:"Tasks", kanban:"Kanban Board", team:"My Team", analytics:"Analytics", notifications:"Notifications", profile:"Profile", settings:"Settings", mytasks:"My Tasks", inbox:"Inbox", activity:"Activity" }[activeTab] || "FlowSync"
+                : "FlowSync"}
+            </span>
           </div>
-        )}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {/* Dark mode toggle in topbar */}
+            <button onClick={() => toggleDark(!darkMode)} style={{ background: darkMode ? "rgba(255,255,255,0.08)" : COLORS.softGrey, border: "none", borderRadius: 8, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <Icon name={darkMode ? "sun" : "moon"} size={16} color={textPrimary} />
+            </button>
+            {/* Mobile hamburger */}
+            {isMobile && (
+              <button onClick={() => setMobileMenuOpen(o => !o)} style={{ background: darkMode ? "rgba(255,255,255,0.08)" : COLORS.softGrey, border: "none", borderRadius: 8, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                <Icon name={mobileMenuOpen ? "x" : "menu"} size={18} color={textPrimary} />
+              </button>
+            )}
+          </div>
+        </div>
 
-        <div style={{ flex: 1, padding: isMobile ? "20px 16px" : "32px 36px", maxWidth: 1100, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <div style={{ flex: 1, padding: isMobile ? "20px 16px" : "28px 36px", maxWidth: 1100, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
           {renderContent()}
         </div>
       </main>
