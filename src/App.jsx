@@ -2,9 +2,48 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { auth, googleProvider } from "./firebase";
 import { signInWithPopup, signOut } from "firebase/auth";
 
-// ── Admin credentials (change these to whatever you want) ──
+// ── Admin credentials ──
 const ADMIN_EMAIL    = "admin@flowsync.app";
 const ADMIN_PASSWORD = "Admin@1234";
+
+// ── EmailJS config — replace with your own from emailjs.com (free) ──
+const EMAILJS_SERVICE_ID  = "service_flowsync";
+const EMAILJS_TEMPLATE_ID = "template_invite";
+const EMAILJS_PUBLIC_KEY  = "YOUR_EMAILJS_PUBLIC_KEY";
+
+// ── Notification prefs helpers ──
+const DEFAULT_NOTIF_PREFS = {
+  inviteReceived:  true,   // notify when someone invites you
+  inviteAccepted:  true,   // notify manager when invite accepted
+  taskAssigned:    true,   // notify when a task is assigned to you
+  taskStatusChange:true,   // notify manager when task status changes
+  emailInvite:     true,   // send real email on invite
+  emailTaskUpdate: false,  // send real email on task update
+};
+const loadNotifPrefs = () => {
+  try { const v = localStorage.getItem("fs_notifPrefs"); return v ? { ...DEFAULT_NOTIF_PREFS, ...JSON.parse(v) } : DEFAULT_NOTIF_PREFS; }
+  catch { return DEFAULT_NOTIF_PREFS; }
+};
+const saveNotifPrefs = (prefs) => {
+  try { localStorage.setItem("fs_notifPrefs", JSON.stringify(prefs)); } catch {}
+};
+
+// ── Real email sender via EmailJS ──
+async function sendEmailViaEmailJS({ toEmail, toName, fromName, subject, message, appUrl = "https://flowsync-mu.vercel.app" }) {
+  try {
+    const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service_id:  EMAILJS_SERVICE_ID,
+        template_id: EMAILJS_TEMPLATE_ID,
+        user_id:     EMAILJS_PUBLIC_KEY,
+        template_params: { to_email: toEmail, to_name: toName, from_name: fromName, subject, message, app_url: appUrl },
+      }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
 
 // ─── Palette & Design Tokens ─────────────────────────────────────────────────
 const COLORS = {
@@ -676,7 +715,7 @@ function ManagerDashboard({ user, tasks, users, darkMode }) {
 }
 
 // ─── Task List View ───────────────────────────────────────────────────────────
-function TaskListView({ user, tasks, setTasks, darkMode, filterEmployeeId }) {
+function TaskListView({ user, tasks, setTasks, setNotifications, darkMode, filterEmployeeId }) {
   const [search, setSearch]             = useState("");
   const [filterPriority, setFilterPriority] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -713,8 +752,8 @@ function TaskListView({ user, tasks, setTasks, darkMode, filterEmployeeId }) {
   const addTask = () => {
     if (!newTask.title.trim()) return;
     const finalAssigned = assignMode === "team"
-      ? teamMembers.map(m => m.id)            // whole team
-      : newTask.assignedTo;                   // chosen individuals
+      ? teamMembers.map(m => m.id)
+      : newTask.assignedTo;
     const task = {
       id: `t${Date.now()}`,
       ...newTask,
@@ -726,6 +765,19 @@ function TaskListView({ user, tasks, setTasks, darkMode, filterEmployeeId }) {
       status: "pending",
     };
     setTasks(prev => [...prev, task]);
+    // Send in-app notification to each assignee (respecting their prefs)
+    if (setNotifications) {
+      const prefs = loadNotifPrefs();
+      if (prefs.taskAssigned) {
+        finalAssigned.forEach(uid => {
+          setNotifications(prev => [{
+            id: `n${Date.now()}_${uid}`, type: "taskAssigned",
+            message: `${user.name} assigned you "${newTask.title}"`,
+            time: "just now", read: false, userId: uid,
+          }, ...prev]);
+        });
+      }
+    }
     setNewTask({ title: "", description: "", deadline: "", priority: "medium", assignedTo: [], category: "" });
     setAssignMode("team");
     setShowAddTask(false);
@@ -1065,6 +1117,7 @@ function TeamManagement({ user, invitations, setInvitations, notifications, setN
   const [gmailError, setGmailError] = useState("");
   const [gmailSuccess, setGmailSuccess] = useState("");
   const [sentInvites, setSentInvites] = useState([]);
+  const [emailSending, setEmailSending] = useState(false);
   const [activeTab, setActiveTab] = useState("members");
   const [aiSuggestion, setAiSuggestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -1082,7 +1135,15 @@ function TeamManagement({ user, invitations, setInvitations, notifications, setN
 
   const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-  const sendGmailInvite = () => {
+  const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const notifPrefs = loadNotifPrefs();
+
+  const pushNotif = (type, message, userId) => {
+    if (!notifPrefs[type]) return;
+    setNotifications(prev => [{ id: `n${Date.now()}`, type, message, time: "just now", read: false, userId }, ...prev]);
+  };
+
+  const sendGmailInvite = async () => {
     setGmailError(""); setGmailSuccess("");
     const email = gmailInput.trim().toLowerCase();
     if (!email) { setGmailError("Please enter a Gmail address."); return; }
@@ -1093,33 +1154,43 @@ function TeamManagement({ user, invitations, setInvitations, notifications, setN
     if (teamMembers.find(m => m.email === email)) {
       setGmailError("This person is already on your team!"); return;
     }
-
-    // Check if they match a known demo user
+    setEmailSending(true);
     const knownUser = MOCK_USERS.employees.find(e => e.email === email);
+    const personalMsg = gmailMessage || "Hi! I'd love for you to join my team on FlowSync. Click the link to sign in and accept.";
     const invite = {
-      id: `gi${Date.now()}`, email, name: knownUser ? knownUser.name : email.split("@")[0],
+      id: `gi${Date.now()}`, email,
+      name: knownUser ? knownUser.name : email.split("@")[0],
       avatar: knownUser ? knownUser.avatar : email.slice(0,2).toUpperCase(),
-      message: gmailMessage || "Hi! I\'d love for you to join my team on FlowSync.",
-      status: "pending", sentAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      message: personalMsg, status: "pending",
+      sentAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       isKnown: !!knownUser, userId: knownUser?.id,
+      emailSent: false,
     };
-    setSentInvites(prev => [invite, ...prev]);
-
-    if (knownUser) {
-      setInvitations(prev => [...prev, { id: `inv${Date.now()}`, managerId: user.id, managerName: user.name, teamId: user.teamId, employeeId: knownUser.id, status: "pending", message: invite.message, time: "just now" }]);
-      setNotifications(prev => [{ id: `n${Date.now()}`, type: "invitation", message: `${user.name} invited you to their team via email`, time: "just now", read: false, userId: knownUser.id }, ...prev]);
+    if (notifPrefs.emailInvite) {
+      invite.emailSent = await sendEmailViaEmailJS({
+        toEmail: email, toName: invite.name, fromName: user.name,
+        subject: `${user.name} invited you to join their FlowSync team`,
+        message: personalMsg,
+      });
     }
-
-    setGmailSuccess(`Invite sent to ${email}! ${knownUser ? "They\'ll see it in their FlowSync inbox." : "They\'ll receive an email shortly."}`);
-    setGmailInput(""); setGmailMessage("");
+    setSentInvites(prev => [invite, ...prev]);
+    if (knownUser) {
+      setInvitations(prev => [...prev, { id: `inv${Date.now()}`, managerId: user.id, managerName: user.name, teamId: user.teamId, employeeId: knownUser.id, status: "pending", message: personalMsg, time: "just now" }]);
+      pushNotif("inviteReceived", `${user.name} invited you to join their team`, knownUser.id);
+    }
+    const emailNote = notifPrefs.emailInvite ? (invite.emailSent ? " ✅ Email sent to their inbox." : " ⚠️ Email needs EmailJS setup.") : "";
+    setGmailSuccess(`Invite sent to ${email}!${emailNote}`);
+    setGmailInput(""); setGmailMessage(""); setEmailSending(false);
   };
 
-  const quickInvite = (employee) => {
+  const quickInvite = async (employee) => {
     const alreadyInvited = invitations.some(i => i.employeeId === employee.id && i.managerId === user.id && i.status === "pending");
     if (alreadyInvited) return;
-    const inv = { id: `inv${Date.now()}`, managerId: user.id, managerName: user.name, teamId: user.teamId, employeeId: employee.id, status: "pending", message: "Join our team on FlowSync!", time: "just now" };
-    setInvitations(prev => [...prev, inv]);
-    setNotifications(prev => [{ id: `n${Date.now()}`, type: "invitation", message: `${user.name} invited you to their team`, time: "just now", read: false, userId: employee.id }, ...prev]);
+    setInvitations(prev => [...prev, { id: `inv${Date.now()}`, managerId: user.id, managerName: user.name, teamId: user.teamId, employeeId: employee.id, status: "pending", message: "Join our team on FlowSync!", time: "just now" }]);
+    pushNotif("inviteReceived", `${user.name} invited you to join their team`, employee.id);
+    if (notifPrefs.emailInvite) {
+      await sendEmailViaEmailJS({ toEmail: employee.email, toName: employee.name, fromName: user.name, subject: `${user.name} invited you to FlowSync`, message: "You have been invited to join a team. Sign in to accept." });
+    }
   };
 
   const removeMember = (memberId) => {
@@ -2083,13 +2154,25 @@ function AdminDashboard({ onLogout }) {
   );
 }
 
+// ─── Toggle Switch Component ─────────────────────────────────────────────────
+function ToggleSwitch({ on, onChange }) {
+  return (
+    <button onClick={() => onChange(!on)}
+      style={{ position: "relative", width: 46, height: 26, borderRadius: 13, background: on ? `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})` : "rgba(128,128,128,0.25)", border: "none", cursor: "pointer", flexShrink: 0, transition: "background 0.22s", padding: 0 }}>
+      <div style={{ position: "absolute", top: 3, left: on ? 23 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.25)", transition: "left 0.22s" }} />
+    </button>
+  );
+}
+
 // ─── Settings & Delete Account ────────────────────────────────────────────────
 function SettingsPage({ user, setUser, onLogout, darkMode }) {
-  const [section, setSection] = useState("main"); // main | yourinfo | deleteconfirm
+  const [section, setSection]       = useState("main"); // main | yourinfo | notifications | deleteconfirm
   const [deletePass, setDeletePass] = useState("");
   const [deleteError, setDeleteError] = useState("");
-  const [showPass, setShowPass] = useState(false);
-  const [deleted, setDeleted] = useState(false);
+  const [showPass, setShowPass]     = useState(false);
+  const [deleted, setDeleted]       = useState(false);
+  const [notifPrefs, setNotifPrefsState] = useState(loadNotifPrefs);
+  const [prefsSaved, setPrefsSaved] = useState(false);
 
   const cardBg     = darkMode ? "#112240" : "#fff";
   const cardBorder = darkMode ? "rgba(255,255,255,0.10)" : COLORS.softGrey;
@@ -2100,6 +2183,14 @@ function SettingsPage({ user, setUser, onLogout, darkMode }) {
   const divider    = darkMode ? "rgba(255,255,255,0.07)" : COLORS.softGrey;
 
   const CONFIRM_PASSWORD = "Delete@" + (user.name.split(" ")[0] || "User") + "123";
+
+  const updatePref = (key, val) => {
+    const updated = { ...notifPrefs, [key]: val };
+    setNotifPrefsState(updated);
+    saveNotifPrefs(updated);
+    setPrefsSaved(true);
+    setTimeout(() => setPrefsSaved(false), 2000);
+  };
 
   const handleDeleteConfirm = () => {
     setDeleteError("");
@@ -2142,7 +2233,7 @@ function SettingsPage({ user, setUser, onLogout, darkMode }) {
           </button>
         )}
         <h2 style={{ color: textPrimary, fontSize: 22, fontWeight: 800 }}>
-          {section === "main" ? "Settings" : section === "yourinfo" ? "Your Info" : "Delete Account"}
+          {section === "main" ? "Settings" : section === "yourinfo" ? "Your Info" : section === "notifications" ? "Notifications" : "Delete Account"}
         </h2>
       </div>
 
@@ -2150,11 +2241,11 @@ function SettingsPage({ user, setUser, onLogout, darkMode }) {
       {section === "main" && (
         <div style={{ background: cardBg, borderRadius: 16, border: `1px solid ${cardBorder}`, overflow: "hidden" }}>
           {[
-            { id: "yourinfo", icon: "user", label: "Your Info", desc: "Manage your account data", color: COLORS.blue },
-            { id: "notifications_pref", icon: "bell", label: "Notifications", desc: "Email and push preferences", color: COLORS.teal },
-            { id: "privacy", icon: "shield", label: "Privacy & Security", desc: "Control your privacy settings", color: COLORS.success },
-          ].map((item, idx) => (
-            <button key={item.id} onClick={() => item.id === "yourinfo" && setSection("yourinfo")}
+            { id: "yourinfo",      icon: "user",     label: "Your Info",            desc: "Manage your account data",        color: COLORS.blue    },
+            { id: "notifications", icon: "bell",     label: "Notifications",        desc: "In-app & email alert preferences", color: COLORS.teal    },
+            { id: "privacy",       icon: "shield",   label: "Privacy & Security",   desc: "Control your privacy settings",    color: COLORS.success },
+          ].map((item) => (
+            <button key={item.id} onClick={() => (item.id === "yourinfo" || item.id === "notifications") && setSection(item.id)}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "16px 20px", background: "transparent", border: "none", borderBottom: `1px solid ${divider}`, cursor: "pointer", textAlign: "left", transition: "background 0.15s" }}
               onMouseEnter={e => e.currentTarget.style.background = darkMode ? "rgba(255,255,255,0.04)" : "#f8faff"}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -2233,6 +2324,92 @@ function SettingsPage({ user, setUser, onLogout, darkMode }) {
             <Icon name="trash" size={18} color={COLORS.danger} />
             <span style={{ color: COLORS.danger, fontWeight: 700, fontSize: 15 }}>Delete My Account</span>
           </button>
+        </div>
+      )}
+
+      {/* ── Notifications Preferences ── */}
+      {section === "notifications" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {prefsSaved && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", background: `${COLORS.success}12`, border: `1px solid ${COLORS.success}35`, borderRadius: 12 }}>
+              <Icon name="check" size={15} color={COLORS.success} />
+              <span style={{ color: COLORS.success, fontSize: 13, fontWeight: 600 }}>Preferences saved automatically</span>
+            </div>
+          )}
+
+          {/* In-app notifications */}
+          <div style={{ background: cardBg, borderRadius: 16, border: `1px solid ${cardBorder}`, overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px", borderBottom: `1px solid ${divider}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: `${COLORS.teal}18`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icon name="bell" size={18} color={COLORS.teal} />
+                </div>
+                <div>
+                  <div style={{ color: textPrimary, fontWeight: 700, fontSize: 14 }}>In-App Notifications</div>
+                  <div style={{ color: textSecondary, fontSize: 12 }}>Bell icon alerts inside FlowSync</div>
+                </div>
+              </div>
+            </div>
+            {[
+              { key: "inviteReceived",   label: "Team Invitations",      desc: "When someone invites you to their team",           icon: "mail"     },
+              { key: "inviteAccepted",   label: "Invite Accepted",       desc: "When an employee accepts your invitation",         icon: "check"    },
+              { key: "taskAssigned",     label: "Task Assigned",         desc: "When a manager assigns a new task to you",         icon: "tasks"    },
+              { key: "taskStatusChange", label: "Task Status Updates",   desc: "When a task you manage is moved forward",          icon: "activity" },
+            ].map((pref, idx, arr) => (
+              <div key={pref.key} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: idx < arr.length - 1 ? `1px solid ${divider}` : "none" }}>
+                <div style={{ width: 34, height: 34, borderRadius: 9, background: `${COLORS.blue}12`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon name={pref.icon} size={16} color={COLORS.blue} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: textPrimary, fontSize: 13, fontWeight: 600 }}>{pref.label}</div>
+                  <div style={{ color: textSecondary, fontSize: 12 }}>{pref.desc}</div>
+                </div>
+                <ToggleSwitch on={notifPrefs[pref.key]} onChange={v => updatePref(pref.key, v)} />
+              </div>
+            ))}
+          </div>
+
+          {/* Email notifications */}
+          <div style={{ background: cardBg, borderRadius: 16, border: `1px solid ${cardBorder}`, overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px", borderBottom: `1px solid ${divider}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: `${COLORS.blue}18`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icon name="mail" size={18} color={COLORS.blue} />
+                </div>
+                <div>
+                  <div style={{ color: textPrimary, fontWeight: 700, fontSize: 14 }}>Email Notifications</div>
+                  <div style={{ color: textSecondary, fontSize: 12 }}>Real emails sent to recipients</div>
+                </div>
+              </div>
+            </div>
+            {[
+              { key: "emailInvite",      label: "Email on Invite Sent",    desc: "Send a real email when you invite someone",        icon: "send"     },
+              { key: "emailTaskUpdate",  label: "Email on Task Update",    desc: "Email employees when their task status changes",    icon: "edit"     },
+            ].map((pref, idx, arr) => (
+              <div key={pref.key} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: idx < arr.length - 1 ? `1px solid ${divider}` : "none" }}>
+                <div style={{ width: 34, height: 34, borderRadius: 9, background: `${COLORS.teal}12`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon name={pref.icon} size={16} color={COLORS.teal} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: textPrimary, fontSize: 13, fontWeight: 600 }}>{pref.label}</div>
+                  <div style={{ color: textSecondary, fontSize: 12 }}>{pref.desc}</div>
+                </div>
+                <ToggleSwitch on={notifPrefs[pref.key]} onChange={v => updatePref(pref.key, v)} />
+              </div>
+            ))}
+            {/* EmailJS setup note */}
+            <div style={{ padding: "14px 20px", background: `${COLORS.warning}08`, borderTop: `1px solid ${divider}` }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <Icon name="alertTriangle" size={15} color={COLORS.warning} />
+                <div>
+                  <div style={{ color: COLORS.warning, fontSize: 12, fontWeight: 600, marginBottom: 3 }}>Email setup required</div>
+                  <div style={{ color: textSecondary, fontSize: 12, lineHeight: 1.55 }}>
+                    Real emails need a free <strong style={{ color: textPrimary }}>EmailJS</strong> account. Create one at <span style={{ color: COLORS.teal }}>emailjs.com</span>, create a template, and paste your Service ID, Template ID, and Public Key into the <code style={{ color: COLORS.teal, background: `${COLORS.teal}15`, padding: "1px 5px", borderRadius: 4 }}>src/App.jsx</code> config at the top of the file.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2406,7 +2583,7 @@ export default function App() {
     if (user.role === "manager") {
       switch (activeTab) {
         case "dashboard": return <ManagerDashboard user={user} tasks={tasks} users={MOCK_USERS} darkMode={darkMode} />;
-        case "tasks": return <TaskListView user={user} tasks={tasks} setTasks={setTasks} darkMode={darkMode} />;
+        case "tasks": return <TaskListView user={user} tasks={tasks} setTasks={setTasks} setNotifications={setNotifications} darkMode={darkMode} />;
         case "kanban": return <KanbanBoard user={user} tasks={tasks} setTasks={setTasks} darkMode={darkMode} />;
         case "team": return <TeamManagement user={user} invitations={invitations} setInvitations={setInvitations} notifications={notifications} setNotifications={setNotifications} darkMode={darkMode} />;
         case "analytics": return <Analytics user={user} tasks={tasks} darkMode={darkMode} />;
@@ -2439,10 +2616,10 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <TaskListView user={user} tasks={tasks} setTasks={setTasks} darkMode={darkMode} />
+            <TaskListView user={user} tasks={tasks} setTasks={setTasks} setNotifications={setNotifications} darkMode={darkMode} />
           </div>
         );
-        case "mytasks": return <TaskListView user={user} tasks={tasks} setTasks={setTasks} darkMode={darkMode} />;
+        case "mytasks": return <TaskListView user={user} tasks={tasks} setTasks={setTasks} setNotifications={setNotifications} darkMode={darkMode} />;
         case "inbox": return <EmployeeInbox user={user} invitations={invitations} setInvitations={setInvitations} notifications={notifications} setNotifications={setNotifications} darkMode={darkMode} />;
         case "activity": return <ActivityLog user={user} tasks={tasks} darkMode={darkMode} />;
         case "notifications": return <NotificationsPanel user={user} notifications={notifications} setNotifications={setNotifications} darkMode={darkMode} />;
