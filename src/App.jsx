@@ -677,12 +677,14 @@ function ManagerDashboard({ user, tasks, users, darkMode }) {
 
 // ─── Task List View ───────────────────────────────────────────────────────────
 function TaskListView({ user, tasks, setTasks, darkMode, filterEmployeeId }) {
-  const [search, setSearch] = useState("");
+  const [search, setSearch]             = useState("");
   const [filterPriority, setFilterPriority] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
-  const [showAddTask, setShowAddTask] = useState(false);
-  const [newTask, setNewTask] = useState({ title: "", description: "", deadline: "", priority: "medium", assignedTo: [], category: "" });
+  const [showAddTask, setShowAddTask]   = useState(false);
+  const [assignMode, setAssignMode]     = useState("team"); // "team" | "specific"
+  const [newTask, setNewTask]           = useState({ title: "", description: "", deadline: "", priority: "medium", assignedTo: [], category: "" });
 
+  const teamMembers = MOCK_USERS.employees.filter(e => e.teamId === user.teamId);
   const myTasks = tasks.filter(t => user.role === "manager" ? t.managerId === user.id : t.assignedTo.includes(user.id));
   const filtered = myTasks.filter(t =>
     (!search || t.title.toLowerCase().includes(search.toLowerCase()) || t.description.toLowerCase().includes(search.toLowerCase())) &&
@@ -691,84 +693,293 @@ function TaskListView({ user, tasks, setTasks, darkMode, filterEmployeeId }) {
     (!filterEmployeeId || t.assignedTo.includes(filterEmployeeId))
   );
 
-  const teamMembers = MOCK_USERS.employees.filter(e => e.teamId === user.teamId);
-  const cardBg = darkMode ? COLORS.navyLight : "#fff";
-  const textPrimary = darkMode ? "#fff" : COLORS.navy;
-  const textSecondary = darkMode ? COLORS.midGrey : COLORS.darkGrey;
+  const cardBg      = darkMode ? COLORS.navyLight : "#fff";
+  const inputBg     = darkMode ? "rgba(255,255,255,0.05)" : COLORS.offWhite;
+  const inputBorder = darkMode ? "rgba(255,255,255,0.10)" : COLORS.softGrey;
+  const textPrimary    = darkMode ? "#E8F0FF" : COLORS.navy;
+  const textSecondary  = darkMode ? "#7BAAD0" : COLORS.darkGrey;
+  const divider        = darkMode ? "rgba(255,255,255,0.07)" : COLORS.softGrey;
+
+  // Toggle a specific member on/off
+  const toggleMember = (id) => {
+    setNewTask(prev => ({
+      ...prev,
+      assignedTo: prev.assignedTo.includes(id)
+        ? prev.assignedTo.filter(x => x !== id)
+        : [...prev.assignedTo, id],
+    }));
+  };
 
   const addTask = () => {
-    if (!newTask.title) return;
-    const task = { id: `t${Date.now()}`, ...newTask, teamId: user.teamId, managerId: user.id, comments: [], createdAt: new Date().toISOString().split("T")[0], status: "pending" };
+    if (!newTask.title.trim()) return;
+    const finalAssigned = assignMode === "team"
+      ? teamMembers.map(m => m.id)            // whole team
+      : newTask.assignedTo;                   // chosen individuals
+    const task = {
+      id: `t${Date.now()}`,
+      ...newTask,
+      assignedTo: finalAssigned,
+      teamId: user.teamId,
+      managerId: user.id,
+      comments: [],
+      createdAt: new Date().toISOString().split("T")[0],
+      status: "pending",
+    };
     setTasks(prev => [...prev, task]);
     setNewTask({ title: "", description: "", deadline: "", priority: "medium", assignedTo: [], category: "" });
+    setAssignMode("team");
     setShowAddTask(false);
   };
 
   const updateTask = (updated) => setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
-  const deleteTask = (id) => setTasks(prev => prev.filter(t => t.id !== id));
+  const deleteTask = (id)      => setTasks(prev => prev.filter(t => t.id !== id));
+
+  const inputStyle = {
+    width: "100%", padding: "10px 14px",
+    background: inputBg,
+    border: `1px solid ${inputBorder}`,
+    borderRadius: 8, color: textPrimary,
+    fontSize: 14, outline: "none", boxSizing: "border-box",
+    fontFamily: "inherit",
+    transition: "border-color 0.18s",
+  };
 
   return (
     <div>
+      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
         <h2 style={{ color: textPrimary, fontSize: 22, fontWeight: 800 }}>{user.role === "manager" ? "All Tasks" : "My Tasks"}</h2>
         {user.role === "manager" && (
-          <button onClick={() => setShowAddTask(!showAddTask)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, border: "none", borderRadius: 10, cursor: "pointer", color: "#fff", fontWeight: 600, fontSize: 14 }}>
-            <Icon name="plus" size={16} color="#fff" />Add Task
+          <button onClick={() => setShowAddTask(s => !s)}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: showAddTask ? `${COLORS.teal}18` : `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, border: showAddTask ? `1px solid ${COLORS.teal}` : "none", borderRadius: 10, cursor: "pointer", color: showAddTask ? COLORS.teal : "#fff", fontWeight: 600, fontSize: 14, transition: "all 0.2s" }}>
+            <Icon name={showAddTask ? "x" : "plus"} size={16} color={showAddTask ? COLORS.teal : "#fff"} />
+            {showAddTask ? "Cancel" : "Add Task"}
           </button>
         )}
       </div>
 
-      {/* Add Task Form */}
+      {/* ── Add Task Form ── */}
       {showAddTask && (
-        <div style={{ background: cardBg, borderRadius: 16, padding: 24, marginBottom: 20, border: `1px solid ${COLORS.teal}40`, boxShadow: "0 4px 24px rgba(13,191,191,0.1)" }}>
-          <h3 style={{ color: textPrimary, fontWeight: 700, marginBottom: 20 }}>New Task</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-            <div><label style={{ color: textSecondary, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>Title *</label>
-              <input value={newTask.title} onChange={e => setNewTask({ ...newTask, title: e.target.value })} placeholder="Task title" style={{ width: "100%", padding: "10px 14px", background: darkMode ? "rgba(255,255,255,0.05)" : COLORS.offWhite, border: `1px solid ${darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 8, color: textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} /></div>
-            <div><label style={{ color: textSecondary, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>Category</label>
-              <input value={newTask.category} onChange={e => setNewTask({ ...newTask, category: e.target.value })} placeholder="e.g. Engineering" style={{ width: "100%", padding: "10px 14px", background: darkMode ? "rgba(255,255,255,0.05)" : COLORS.offWhite, border: `1px solid ${darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 8, color: textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} /></div>
+        <div style={{ background: cardBg, borderRadius: 18, padding: "24px", marginBottom: 24, border: `1px solid ${COLORS.teal}40`, boxShadow: `0 4px 32px rgba(13,191,191,0.10)` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg, ${COLORS.teal}30, ${COLORS.blue}30)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Icon name="plus" size={18} color={COLORS.teal} />
+            </div>
+            <div style={{ color: textPrimary, fontWeight: 800, fontSize: 16 }}>New Task</div>
           </div>
-          <div style={{ marginBottom: 16 }}><label style={{ color: textSecondary, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>Description</label>
-            <textarea value={newTask.description} onChange={e => setNewTask({ ...newTask, description: e.target.value })} placeholder="Task description..." rows={3} style={{ width: "100%", padding: "10px 14px", background: darkMode ? "rgba(255,255,255,0.05)" : COLORS.offWhite, border: `1px solid ${darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 8, color: textPrimary, fontSize: 14, outline: "none", resize: "vertical", boxSizing: "border-box" }} /></div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
-            <div><label style={{ color: textSecondary, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>Deadline</label>
-              <input type="date" value={newTask.deadline} onChange={e => setNewTask({ ...newTask, deadline: e.target.value })} style={{ width: "100%", padding: "10px 14px", background: darkMode ? "rgba(255,255,255,0.05)" : COLORS.offWhite, border: `1px solid ${darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 8, color: textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} /></div>
-            <div><label style={{ color: textSecondary, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>Priority</label>
-              <select value={newTask.priority} onChange={e => setNewTask({ ...newTask, priority: e.target.value })} style={{ width: "100%", padding: "10px 14px", background: darkMode ? COLORS.navyLight : COLORS.offWhite, border: `1px solid ${darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 8, color: textPrimary, fontSize: 14, outline: "none" }}>
-                <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
-              </select></div>
-            <div><label style={{ color: textSecondary, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>Assign To</label>
-              <select multiple value={newTask.assignedTo} onChange={e => setNewTask({ ...newTask, assignedTo: [...e.target.selectedOptions].map(o => o.value) })} style={{ width: "100%", padding: "10px 14px", background: darkMode ? COLORS.navyLight : COLORS.offWhite, border: `1px solid ${darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 8, color: textPrimary, fontSize: 13, outline: "none", height: 80 }}>
-                <option value="all">Entire Team</option>
-                {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select></div>
+
+          {/* Row 1: Title + Category */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+            <div>
+              <label style={{ color: textSecondary, fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Title *</label>
+              <input value={newTask.title} onChange={e => setNewTask({ ...newTask, title: e.target.value })} placeholder="e.g. Design new homepage" style={inputStyle}
+                onFocus={e => e.target.style.borderColor = COLORS.teal}
+                onBlur={e => e.target.style.borderColor = inputBorder} />
+            </div>
+            <div>
+              <label style={{ color: textSecondary, fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Category</label>
+              <input value={newTask.category} onChange={e => setNewTask({ ...newTask, category: e.target.value })} placeholder="e.g. Engineering, Design…" style={inputStyle}
+                onFocus={e => e.target.style.borderColor = COLORS.teal}
+                onBlur={e => e.target.style.borderColor = inputBorder} />
+            </div>
           </div>
+
+          {/* Description */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ color: textSecondary, fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Description</label>
+            <textarea value={newTask.description} onChange={e => setNewTask({ ...newTask, description: e.target.value })} placeholder="What needs to be done?" rows={3} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.55 }}
+              onFocus={e => e.target.style.borderColor = COLORS.teal}
+              onBlur={e => e.target.style.borderColor = inputBorder} />
+          </div>
+
+          {/* Row 2: Deadline + Priority */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
+            <div>
+              <label style={{ color: textSecondary, fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Deadline</label>
+              <input type="date" value={newTask.deadline} onChange={e => setNewTask({ ...newTask, deadline: e.target.value })} style={inputStyle}
+                onFocus={e => e.target.style.borderColor = COLORS.teal}
+                onBlur={e => e.target.style.borderColor = inputBorder} />
+            </div>
+            <div>
+              <label style={{ color: textSecondary, fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Priority</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[
+                  { val: "low",    label: "Low",    color: COLORS.success },
+                  { val: "medium", label: "Med",    color: COLORS.warning },
+                  { val: "high",   label: "High",   color: COLORS.danger  },
+                ].map(p => (
+                  <button key={p.val} onClick={() => setNewTask({ ...newTask, priority: p.val })}
+                    style={{ flex: 1, padding: "10px 4px", borderRadius: 8, border: `1.5px solid ${newTask.priority === p.val ? p.color : inputBorder}`, background: newTask.priority === p.val ? `${p.color}20` : inputBg, color: newTask.priority === p.val ? p.color : textSecondary, fontWeight: newTask.priority === p.val ? 700 : 500, fontSize: 12, cursor: "pointer", transition: "all 0.15s" }}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Assign To — the upgraded section ── */}
+          <div style={{ borderTop: `1px solid ${divider}`, paddingTop: 20, marginBottom: 20 }}>
+            <label style={{ color: textSecondary, fontSize: 11, fontWeight: 700, display: "block", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Assign To
+            </label>
+
+            {/* Mode toggle */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <button onClick={() => { setAssignMode("team"); setNewTask(prev => ({ ...prev, assignedTo: [] })); }}
+                style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, padding: "12px 16px", borderRadius: 12, border: `2px solid ${assignMode === "team" ? COLORS.teal : inputBorder}`, background: assignMode === "team" ? `${COLORS.teal}15` : inputBg, cursor: "pointer", transition: "all 0.18s" }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", background: assignMode === "team" ? `${COLORS.teal}25` : `${inputBorder}44`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon name="team" size={16} color={assignMode === "team" ? COLORS.teal : textSecondary} />
+                </div>
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ color: assignMode === "team" ? COLORS.teal : textPrimary, fontWeight: 700, fontSize: 13 }}>Entire Team</div>
+                  <div style={{ color: textSecondary, fontSize: 11 }}>{teamMembers.length} member{teamMembers.length !== 1 ? "s" : ""}</div>
+                </div>
+                {assignMode === "team" && (
+                  <div style={{ marginLeft: "auto", width: 18, height: 18, borderRadius: "50%", background: COLORS.teal, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Icon name="check" size={11} color="#fff" />
+                  </div>
+                )}
+              </button>
+
+              <button onClick={() => setAssignMode("specific")}
+                style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, padding: "12px 16px", borderRadius: 12, border: `2px solid ${assignMode === "specific" ? COLORS.blue : inputBorder}`, background: assignMode === "specific" ? `${COLORS.blue}15` : inputBg, cursor: "pointer", transition: "all 0.18s" }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", background: assignMode === "specific" ? `${COLORS.blue}25` : `${inputBorder}44`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon name="user" size={16} color={assignMode === "specific" ? COLORS.blue : textSecondary} />
+                </div>
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ color: assignMode === "specific" ? COLORS.blue : textPrimary, fontWeight: 700, fontSize: 13 }}>Specific People</div>
+                  <div style={{ color: textSecondary, fontSize: 11 }}>
+                    {assignMode === "specific" && newTask.assignedTo.length > 0
+                      ? `${newTask.assignedTo.length} selected`
+                      : "Pick individuals"}
+                  </div>
+                </div>
+                {assignMode === "specific" && (
+                  <div style={{ marginLeft: "auto", width: 18, height: 18, borderRadius: "50%", background: COLORS.blue, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Icon name="check" size={11} color="#fff" />
+                  </div>
+                )}
+              </button>
+            </div>
+
+            {/* Entire Team preview */}
+            {assignMode === "team" && (
+              <div style={{ padding: "12px 16px", background: `${COLORS.teal}08`, borderRadius: 10, border: `1px solid ${COLORS.teal}25` }}>
+                {teamMembers.length === 0 ? (
+                  <p style={{ color: textSecondary, fontSize: 13, margin: 0 }}>⚠️ No team members yet — invite people first.</p>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                    <span style={{ color: textSecondary, fontSize: 12, marginRight: 4 }}>Will be assigned to:</span>
+                    {teamMembers.map(m => (
+                      <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", background: `${COLORS.teal}18`, borderRadius: 20, border: `1px solid ${COLORS.teal}30` }}>
+                        <Avatar initials={m.avatar} size={18} />
+                        <span style={{ color: COLORS.teal, fontSize: 12, fontWeight: 600 }}>{m.name.split(" ")[0]}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Specific people picker */}
+            {assignMode === "specific" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {teamMembers.length === 0 ? (
+                  <p style={{ color: textSecondary, fontSize: 13, padding: "12px 16px", background: `${COLORS.warning}08`, borderRadius: 10, border: `1px solid ${COLORS.warning}25`, margin: 0 }}>⚠️ No team members yet. Go to My Team to invite people first.</p>
+                ) : teamMembers.map(m => {
+                  const selected = newTask.assignedTo.includes(m.id);
+                  return (
+                    <button key={m.id} onClick={() => toggleMember(m.id)}
+                      style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, border: `1.5px solid ${selected ? COLORS.blue : inputBorder}`, background: selected ? `${COLORS.blue}12` : inputBg, cursor: "pointer", transition: "all 0.18s", textAlign: "left", width: "100%" }}>
+                      <div style={{ position: "relative", flexShrink: 0 }}>
+                        <Avatar initials={m.avatar} size={36} color={selected ? COLORS.blue : COLORS.navyMid} />
+                        {selected && (
+                          <div style={{ position: "absolute", bottom: -2, right: -2, width: 14, height: 14, borderRadius: "50%", background: COLORS.blue, border: `2px solid ${cardBg}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <Icon name="check" size={8} color="#fff" />
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: selected ? COLORS.blue : textPrimary, fontWeight: selected ? 700 : 500, fontSize: 14 }}>{m.name}</div>
+                        <div style={{ color: textSecondary, fontSize: 12 }}>{m.email}</div>
+                      </div>
+                      <div style={{ width: 20, height: 20, borderRadius: 5, border: `2px solid ${selected ? COLORS.blue : inputBorder}`, background: selected ? COLORS.blue : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
+                        {selected && <Icon name="check" size={11} color="#fff" />}
+                      </div>
+                    </button>
+                  );
+                })}
+
+                {/* Select All / Clear */}
+                {teamMembers.length > 1 && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                    <button onClick={() => setNewTask(prev => ({ ...prev, assignedTo: teamMembers.map(m => m.id) }))}
+                      style={{ flex: 1, padding: "8px", background: "transparent", border: `1px solid ${inputBorder}`, borderRadius: 8, cursor: "pointer", color: textSecondary, fontSize: 12, fontWeight: 600 }}>
+                      Select All
+                    </button>
+                    <button onClick={() => setNewTask(prev => ({ ...prev, assignedTo: [] }))}
+                      style={{ flex: 1, padding: "8px", background: "transparent", border: `1px solid ${inputBorder}`, borderRadius: 8, cursor: "pointer", color: textSecondary, fontSize: 12, fontWeight: 600 }}>
+                      Clear
+                    </button>
+                  </div>
+                )}
+
+                {newTask.assignedTo.length === 0 && (
+                  <div style={{ color: COLORS.warning, fontSize: 12, display: "flex", alignItems: "center", gap: 6, padding: "2px 4px" }}>
+                    <Icon name="alertTriangle" size={13} color={COLORS.warning} />
+                    Select at least one person
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Action buttons */}
           <div style={{ display: "flex", gap: 12 }}>
-            <button onClick={addTask} style={{ padding: "10px 24px", background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, border: "none", borderRadius: 10, cursor: "pointer", color: "#fff", fontWeight: 600 }}>Create Task</button>
-            <button onClick={() => setShowAddTask(false)} style={{ padding: "10px 24px", background: "transparent", border: `1px solid ${darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 10, cursor: "pointer", color: textSecondary, fontWeight: 600 }}>Cancel</button>
+            <button onClick={addTask}
+              disabled={!newTask.title.trim() || (assignMode === "specific" && newTask.assignedTo.length === 0)}
+              style={{ flex: 1, padding: "12px", background: (!newTask.title.trim() || (assignMode === "specific" && newTask.assignedTo.length === 0)) ? `${COLORS.midGrey}44` : `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, border: "none", borderRadius: 10, cursor: (!newTask.title.trim() || (assignMode === "specific" && newTask.assignedTo.length === 0)) ? "not-allowed" : "pointer", color: "#fff", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "opacity 0.2s" }}>
+              <Icon name="check" size={16} color="#fff" /> Create Task
+            </button>
+            <button onClick={() => { setShowAddTask(false); setNewTask({ title: "", description: "", deadline: "", priority: "medium", assignedTo: [], category: "" }); setAssignMode("team"); }}
+              style={{ padding: "12px 22px", background: inputBg, border: `1px solid ${inputBorder}`, borderRadius: 10, cursor: "pointer", color: textSecondary, fontWeight: 600, fontSize: 14 }}>
+              Cancel
+            </button>
           </div>
         </div>
       )}
 
       {/* Filters */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
-          <Icon name="search" size={16} color={COLORS.midGrey} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tasks..." style={{ width: "100%", padding: "10px 14px 10px 38px", background: cardBg, border: `1px solid ${darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 10, color: textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+          <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+            <Icon name="search" size={15} color={COLORS.midGrey} />
+          </div>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tasks..." style={{ width: "100%", padding: "10px 14px 10px 36px", background: cardBg, border: `1px solid ${inputBorder}`, borderRadius: 10, color: textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
         </div>
-        {["all", "low", "medium", "high"].map(p => (
-          <button key={p} onClick={() => setFilterPriority(p)} style={{ padding: "8px 16px", background: filterPriority === p ? `${COLORS.teal}22` : cardBg, border: `1px solid ${filterPriority === p ? COLORS.teal : darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 10, cursor: "pointer", color: filterPriority === p ? COLORS.teal : textSecondary, fontSize: 13, fontWeight: filterPriority === p ? 600 : 400, textTransform: "capitalize" }}>{p}</button>
-        ))}
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ padding: "8px 14px", background: cardBg, border: `1px solid ${darkMode ? "rgba(255,255,255,0.1)" : COLORS.softGrey}`, borderRadius: 10, color: textPrimary, fontSize: 13, outline: "none" }}>
-          <option value="all">All Status</option><option value="pending">Pending</option><option value="ongoing">In Progress</option><option value="completed">Completed</option>
+        <div style={{ display: "flex", gap: 6 }}>
+          {["all", "low", "medium", "high"].map(p => (
+            <button key={p} onClick={() => setFilterPriority(p)}
+              style={{ padding: "8px 14px", background: filterPriority === p ? `${COLORS.teal}22` : cardBg, border: `1px solid ${filterPriority === p ? COLORS.teal : inputBorder}`, borderRadius: 10, cursor: "pointer", color: filterPriority === p ? COLORS.teal : textSecondary, fontSize: 13, fontWeight: filterPriority === p ? 700 : 400, textTransform: "capitalize", transition: "all 0.15s" }}>{p}</button>
+          ))}
+        </div>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+          style={{ padding: "8px 14px", background: cardBg, border: `1px solid ${inputBorder}`, borderRadius: 10, color: textPrimary, fontSize: 13, outline: "none" }}>
+          <option value="all">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="ongoing">In Progress</option>
+          <option value="completed">Completed</option>
         </select>
       </div>
 
-      <div style={{ color: textSecondary, fontSize: 13, marginBottom: 14 }}>{filtered.length} task{filtered.length !== 1 ? "s" : ""} found</div>
+      <div style={{ color: textSecondary, fontSize: 13, marginBottom: 14 }}>
+        {filtered.length} task{filtered.length !== 1 ? "s" : ""} found
+      </div>
 
       {filtered.length === 0 ? (
         <div style={{ textAlign: "center", padding: 60, color: textSecondary }}>
-          <Icon name="tasks" size={48} color={COLORS.midGrey} /><p style={{ marginTop: 16 }}>No tasks found</p>
+          <Icon name="tasks" size={48} color={COLORS.midGrey} />
+          <p style={{ marginTop: 16 }}>No tasks found</p>
         </div>
       ) : filtered.map(t => (
         <TaskCard key={t.id} task={t} users={[user]} onUpdate={updateTask} onDelete={user.role === "manager" ? deleteTask : null} darkMode={darkMode} />
