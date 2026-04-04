@@ -7,9 +7,9 @@ const ADMIN_EMAIL    = "admin@flowsync.app";
 const ADMIN_PASSWORD = "Admin@1234";
 
 // ── EmailJS config — replace with your own from emailjs.com (free) ──
-const EMAILJS_SERVICE_ID  = "service_flowsync";
-const EMAILJS_TEMPLATE_ID = "template_invite";
-const EMAILJS_PUBLIC_KEY  = "YOUR_EMAILJS_PUBLIC_KEY";
+const EMAILJS_SERVICE_ID  = "service_z87qj7l";
+const EMAILJS_TEMPLATE_ID = "template_w4zm91k";
+const EMAILJS_PUBLIC_KEY  = "RYJYBmmM_2u7WyK2m";
 
 // ── Notification prefs helpers ──
 const DEFAULT_NOTIF_PREFS = {
