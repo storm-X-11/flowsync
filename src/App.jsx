@@ -7,9 +7,9 @@ const ADMIN_EMAIL    = "admin@flowsync.app";
 const ADMIN_PASSWORD = "Admin@1234";
 
 // ── EmailJS config — replace with your own from emailjs.com (free) ──
-const EMAILJS_SERVICE_ID  = "service_z87qj7l";
-const EMAILJS_TEMPLATE_ID = "template_w4zm91k";
-const EMAILJS_PUBLIC_KEY  = "RYJYBmmM_2u7WyK2m";
+const EMAILJS_SERVICE_ID  = "service_flowsync";
+const EMAILJS_TEMPLATE_ID = "template_invite";
+const EMAILJS_PUBLIC_KEY  = "YOUR_EMAILJS_PUBLIC_KEY";
 
 // ── Notification prefs helpers ──
 const DEFAULT_NOTIF_PREFS = {
@@ -1135,7 +1135,20 @@ function KanbanBoard({ user, tasks, setTasks, darkMode }) {
 
 // ─── Team Management ──────────────────────────────────────────────────────────
 function TeamManagement({ user, invitations, setInvitations, notifications, setNotifications, darkMode }) {
-  const [teamMembers, setTeamMembers] = useState(MOCK_USERS.employees.filter(e => e.teamId === user.teamId));
+  const [teamMembers, setTeamMembers] = useState(() => {
+    // Load from localStorage first (real accepted members), then fall back to MOCK_USERS
+    try {
+      const teamKey = `fs_team_${user.teamId}`;
+      const stored = JSON.parse(localStorage.getItem(teamKey) || "[]");
+      const mock = MOCK_USERS.employees.filter(e => e.teamId === user.teamId);
+      // Merge: stored real users + mock users, deduplicated by id
+      const all = [...stored, ...mock];
+      const seen = new Set();
+      return all.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
+    } catch {
+      return MOCK_USERS.employees.filter(e => e.teamId === user.teamId);
+    }
+  });
   const [gmailInput, setGmailInput] = useState("");
   const [gmailMessage, setGmailMessage] = useState("");
   const [gmailError, setGmailError] = useState("");
@@ -1157,6 +1170,19 @@ function TeamManagement({ user, invitations, setInvitations, notifications, setN
 
   const nonMembers = MOCK_USERS.employees.filter(e => !teamMembers.find(m => m.id === e.id));
   const notifPrefs = loadNotifPrefs();
+
+  // Refresh team list when an invitation gets accepted
+  useEffect(() => {
+    try {
+      const teamKey = `fs_team_${user.teamId}`;
+      const stored = JSON.parse(localStorage.getItem(teamKey) || "[]");
+      const mock = MOCK_USERS.employees.filter(e => e.teamId === user.teamId);
+      const all = [...stored, ...mock];
+      const seen = new Set();
+      const merged = all.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
+      setTeamMembers(merged);
+    } catch {}
+  }, [invitations]);
 
   const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -1573,19 +1599,56 @@ function Analytics({ user, tasks, darkMode }) {
 }
 
 // ─── Employee Inbox ───────────────────────────────────────────────────────────
-function EmployeeInbox({ user, invitations, setInvitations, notifications, setNotifications, darkMode }) {
+function EmployeeInbox({ user, setUser, invitations, setInvitations, notifications, setNotifications, darkMode }) {
   const myInvites = invitations.filter(i => (i.employeeId === user.id || i.recipientEmail === user.email) && i.status === "pending");
   const textPrimary = darkMode ? "#fff" : COLORS.navy;
   const textSecondary = darkMode ? COLORS.midGrey : COLORS.darkGrey;
   const cardBg = darkMode ? COLORS.navyLight : "#fff";
 
   const handleInvite = (invId, action) => {
+    const inv = invitations.find(i => i.id === invId);
+    if (!inv) return;
+
+    // 1. Update invitation status
     setInvitations(prev => prev.map(i => i.id === invId ? { ...i, status: action } : i));
+
     if (action === "accepted") {
-      const inv = invitations.find(i => i.id === invId);
-      MOCK_USERS.employees.find(e => e.id === user.id).teamId = inv.teamId;
+      // 2. Update this user's teamId in their persisted profile
+      const updatedUser = { ...user, teamId: inv.teamId };
+      if (setUser) setUser(updatedUser);
+
+      // 3. Update MOCK_USERS in memory for same-session display
+      const mockEmp = MOCK_USERS.employees.find(e => e.id === user.id || e.email === user.email);
+      if (mockEmp) { mockEmp.teamId = inv.teamId; mockEmp.id = user.id; mockEmp.name = user.name; mockEmp.email = user.email; mockEmp.avatar = user.avatar; }
+      else { MOCK_USERS.employees.push({ id: user.id, name: user.name, email: user.email, avatar: user.avatar, role: "employee", teamId: inv.teamId }); }
+
+      // 4. Notify the manager that their invite was accepted
+      const prefs = loadNotifPrefs();
+      if (prefs.inviteAccepted) {
+        setNotifications(prev => [{
+          id: `n${Date.now()}_mgr`, type: "inviteAccepted",
+          message: `${user.name} accepted your team invitation! 🎉`,
+          time: "just now", read: false, userId: inv.managerId,
+        }, ...prev]);
+      }
+
+      // 5. Persist team membership to localStorage so it survives refresh
+      try {
+        const teamKey = `fs_team_${inv.teamId}`;
+        const existing = JSON.parse(localStorage.getItem(teamKey) || "[]");
+        if (!existing.find(m => m.id === user.id)) {
+          existing.push({ id: user.id, name: user.name, email: user.email, avatar: user.avatar, photoUrl: user.photoUrl || null, teamId: inv.teamId, role: "employee" });
+          localStorage.setItem(teamKey, JSON.stringify(existing));
+        }
+      } catch {}
     }
-    setNotifications(prev => [{ id: `n${Date.now()}`, type: "invite_response", message: `You ${action} the team invitation`, time: "just now", read: false, userId: user.id }, ...prev]);
+
+    // 6. Notify the employee
+    setNotifications(prev => [{
+      id: `n${Date.now()}`, type: "invite_response",
+      message: action === "accepted" ? `You joined ${inv.managerName}'s team! 🎉` : `You declined the invitation from ${inv.managerName}`,
+      time: "just now", read: false, userId: user.id,
+    }, ...prev]);
   };
 
   return (
@@ -2690,7 +2753,7 @@ export default function App() {
           </div>
         );
         case "mytasks": return <TaskListView user={user} tasks={tasks} setTasks={setTasks} setNotifications={setNotifications} darkMode={darkMode} />;
-        case "inbox": return <EmployeeInbox user={user} invitations={invitations} setInvitations={setInvitations} notifications={notifications} setNotifications={setNotifications} darkMode={darkMode} />;
+        case "inbox": return <EmployeeInbox user={user} setUser={setUser} invitations={invitations} setInvitations={setInvitations} notifications={notifications} setNotifications={setNotifications} darkMode={darkMode} />;
         case "activity": return <ActivityLog user={user} tasks={tasks} darkMode={darkMode} />;
         case "notifications": return <NotificationsPanel user={user} notifications={notifications} setNotifications={setNotifications} darkMode={darkMode} />;
         case "profile": return <ProfileSection user={user} setUser={setUser} tasks={tasks} darkMode={darkMode} />;
