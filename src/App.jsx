@@ -7,9 +7,9 @@ const ADMIN_EMAIL    = "admin@flowsync.app";
 const ADMIN_PASSWORD = "Admin@1234";
 
 // ── EmailJS config — replace with your own from emailjs.com (free) ──
-const EMAILJS_SERVICE_ID  = "service_z87qj71";
-const EMAILJS_TEMPLATE_ID = "template_w4zm91k";
-const EMAILJS_PUBLIC_KEY  = "RYJYBmmM_2u7WyK2m";
+const EMAILJS_SERVICE_ID  = "service_flowsync";
+const EMAILJS_TEMPLATE_ID = "template_invite";
+const EMAILJS_PUBLIC_KEY  = "YOUR_EMAILJS_PUBLIC_KEY";
 
 // ── Notification prefs helpers ──
 const DEFAULT_NOTIF_PREFS = {
@@ -1132,11 +1132,9 @@ function TeamManagement({ user, invitations, setInvitations, notifications, setN
   const divider       = darkMode ? "rgba(255,255,255,0.07)" : COLORS.softGrey;
 
   const nonMembers = MOCK_USERS.employees.filter(e => !teamMembers.find(m => m.id === e.id));
-
-  const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-
-  const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const notifPrefs = loadNotifPrefs();
+
+  const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   const pushNotif = (type, message, userId) => {
     if (!notifPrefs[type]) return;
