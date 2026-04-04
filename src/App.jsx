@@ -7,9 +7,9 @@ const ADMIN_EMAIL    = "admin@flowsync.app";
 const ADMIN_PASSWORD = "Admin@1234";
 
 // ── EmailJS config — replace with your own from emailjs.com (free) ──
-const EMAILJS_SERVICE_ID  = "service_z87qj71";
-const EMAILJS_TEMPLATE_ID = "template_w4zm91k";
-const EMAILJS_PUBLIC_KEY  = "RYJYBmmM_2u7WyK2m";
+const EMAILJS_SERVICE_ID  = "service_flowsync";
+const EMAILJS_TEMPLATE_ID = "template_invite";
+const EMAILJS_PUBLIC_KEY  = "YOUR_EMAILJS_PUBLIC_KEY";
 
 // ── Notification prefs helpers ──
 const DEFAULT_NOTIF_PREFS = {
@@ -27,6 +27,30 @@ const loadNotifPrefs = () => {
 const saveNotifPrefs = (prefs) => {
   try { localStorage.setItem("fs_notifPrefs", JSON.stringify(prefs)); } catch {}
 };
+
+// ── Cross-user invite store (keyed by recipient email in localStorage) ──
+// Manager stores invite → recipient picks it up on login regardless of device
+function storeInviteForEmail(email, invite) {
+  try {
+    const key = "fs_pending_invite_" + email.toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const existing = JSON.parse(localStorage.getItem(key) || "[]");
+    existing.push(invite);
+    localStorage.setItem(key, JSON.stringify(existing));
+  } catch {}
+}
+function loadInvitesForEmail(email) {
+  try {
+    const key = "fs_pending_invite_" + email.toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+function clearInvitesForEmail(email) {
+  try {
+    const key = "fs_pending_invite_" + email.toLowerCase().replace(/[^a-z0-9]/g, "_");
+    localStorage.removeItem(key);
+  } catch {}
+}
 
 // ── Real email sender via EmailJS ──
 async function sendEmailViaEmailJS({ toEmail, toName, fromName, subject, message, appUrl = "https://flowsync-mu.vercel.app" }) {
@@ -1172,22 +1196,34 @@ function TeamManagement({ user, invitations, setInvitations, notifications, setN
       });
     }
     setSentInvites(prev => [invite, ...prev]);
+
+    // Always store in localStorage by email — real user picks it up on login
+    const crossInvite = {
+      id: `inv${Date.now()}`, managerId: user.id, managerName: user.name,
+      managerEmail: user.email, teamId: user.teamId,
+      status: "pending", message: personalMsg, time: "just now",
+      recipientEmail: email,
+    };
+    storeInviteForEmail(email, crossInvite);
+
     if (knownUser) {
-      setInvitations(prev => [...prev, { id: `inv${Date.now()}`, managerId: user.id, managerName: user.name, teamId: user.teamId, employeeId: knownUser.id, status: "pending", message: personalMsg, time: "just now" }]);
+      setInvitations(prev => [...prev, { ...crossInvite, employeeId: knownUser.id }]);
       pushNotif("inviteReceived", `${user.name} invited you to join their team`, knownUser.id);
     }
-    const emailNote = notifPrefs.emailInvite ? (invite.emailSent ? " ✅ Email sent to their inbox." : " ⚠️ Email needs EmailJS setup.") : "";
-    setGmailSuccess(`Invite sent to ${email}!${emailNote}`);
+    const emailNote = notifPrefs.emailInvite ? (invite.emailSent ? " ✅ Email sent to their inbox." : " ⚠️ Email needs EmailJS setup — see Settings.") : "";
+    setGmailSuccess(`✅ Invite stored for ${email}!${emailNote} They will see it when they log in.`);
     setGmailInput(""); setGmailMessage(""); setEmailSending(false);
   };
 
   const quickInvite = async (employee) => {
     const alreadyInvited = invitations.some(i => i.employeeId === employee.id && i.managerId === user.id && i.status === "pending");
     if (alreadyInvited) return;
-    setInvitations(prev => [...prev, { id: `inv${Date.now()}`, managerId: user.id, managerName: user.name, teamId: user.teamId, employeeId: employee.id, status: "pending", message: "Join our team on FlowSync!", time: "just now" }]);
+    const inv = { id: `inv${Date.now()}`, managerId: user.id, managerName: user.name, teamId: user.teamId, employeeId: employee.id, status: "pending", message: "Join our team on FlowSync!", time: "just now", recipientEmail: employee.email };
+    setInvitations(prev => [...prev, inv]);
+    storeInviteForEmail(employee.email, { ...inv, managerEmail: user.email });
     pushNotif("inviteReceived", `${user.name} invited you to join their team`, employee.id);
     if (notifPrefs.emailInvite) {
-      await sendEmailViaEmailJS({ toEmail: employee.email, toName: employee.name, fromName: user.name, subject: `${user.name} invited you to FlowSync`, message: "You have been invited to join a team. Sign in to accept." });
+      await sendEmailViaEmailJS({ toEmail: employee.email, toName: employee.name, fromName: user.name, subject: `${user.name} invited you to FlowSync`, message: "You have been invited to join a team on FlowSync. Sign in and check your Inbox to accept." });
     }
   };
 
@@ -1538,7 +1574,7 @@ function Analytics({ user, tasks, darkMode }) {
 
 // ─── Employee Inbox ───────────────────────────────────────────────────────────
 function EmployeeInbox({ user, invitations, setInvitations, notifications, setNotifications, darkMode }) {
-  const myInvites = invitations.filter(i => i.employeeId === user.id && i.status === "pending");
+  const myInvites = invitations.filter(i => (i.employeeId === user.id || i.recipientEmail === user.email) && i.status === "pending");
   const textPrimary = darkMode ? "#fff" : COLORS.navy;
   const textSecondary = darkMode ? COLORS.midGrey : COLORS.darkGrey;
   const cardBg = darkMode ? COLORS.navyLight : "#fff";
@@ -2574,7 +2610,43 @@ export default function App() {
     setUserRaw(null);
   };
 
-  if (!user) return <AuthScreen onLogin={u => { setUser(u); setActiveTabRaw("dashboard"); setTabHistory(["dashboard"]); }} />;
+  if (!user) return <AuthScreen onLogin={u => {
+    setUser(u);
+    setActiveTabRaw("dashboard");
+    setTabHistory(["dashboard"]);
+    // Load any cross-device invitations sent to this user's email
+    if (u.email && u.role !== "admin") {
+      const pending = loadInvitesForEmail(u.email);
+      if (pending.length > 0) {
+        setInvRaw(prev => {
+          const existingIds = new Set(prev.map(i => i.id));
+          const fresh = pending
+            .filter(i => !existingIds.has(i.id))
+            .map(i => ({ ...i, employeeId: u.id }));
+          if (fresh.length === 0) return prev;
+          const merged = [...fresh, ...prev];
+          try { localStorage.setItem("fs_invitations", JSON.stringify(merged)); } catch {}
+          return merged;
+        });
+        // Push in-app notifications for each pending invite
+        const prefs = loadNotifPrefs();
+        if (prefs.inviteReceived) {
+          setNotifsRaw(prev => {
+            const fresh = pending.map(i => ({
+              id: `n_login_${i.id}`, type: "inviteReceived",
+              message: `${i.managerName} invited you to join their team`,
+              time: "waiting for you", read: false, userId: u.id,
+            }));
+            const merged = [...fresh, ...prev];
+            try { localStorage.setItem("fs_notifications", JSON.stringify(merged)); } catch {}
+            return merged;
+          });
+        }
+        // Clean up so we don't show duplicates on next login
+        clearInvitesForEmail(u.email);
+      }
+    }
+  }} />;
   if (user.role === "admin") return <AdminDashboard onLogout={() => { try { signOut(auth); } catch(e){} localStorage.removeItem("fs_user"); setUserRaw(null); }} />;
 
   const renderContent = () => {
