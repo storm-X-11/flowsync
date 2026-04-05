@@ -284,9 +284,7 @@ function AuthScreen({ onLogin }) {
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 36 }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-            <div style={{ width: 48, height: 48, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Icon name="zap" size={24} color="#fff" />
-            </div>
+            <img src="/logo.png" alt="FlowSync" style={{ width: 52, height: 52, borderRadius: 14, objectFit: "cover" }} />
             <span style={{ fontSize: 28, fontWeight: 800, color: "#fff", letterSpacing: "-0.5px" }}>FlowSync</span>
           </div>
           <p style={{ color: COLORS.midGrey, fontSize: 14 }}>Workflow Management Platform</p>
@@ -470,16 +468,12 @@ function Sidebar({ user, activeTab, setActiveTab, darkMode, setDarkMode, onLogou
         <div style={{ padding: collapsed && !isMobile ? "20px 0" : "20px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: collapsed && !isMobile ? "center" : "space-between", minHeight: 72, flexShrink: 0 }}>
           {(!collapsed || isMobile) && (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 34, height: 34, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Icon name="zap" size={17} color="#fff" />
-              </div>
+              <img src="/logo.png" alt="FlowSync" style={{ width: 34, height: 34, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
               <span style={{ color: "#fff", fontWeight: 800, fontSize: 17, letterSpacing: "-0.3px", whiteSpace: "nowrap" }}>FlowSync</span>
             </div>
           )}
           {collapsed && !isMobile && (
-            <div style={{ width: 34, height: 34, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Icon name="zap" size={17} color="#fff" />
-            </div>
+            <img src="/logo.png" alt="FlowSync" style={{ width: 34, height: 34, borderRadius: 10, objectFit: "cover" }} />
           )}
           {/* Collapse toggle — desktop only */}
           {!isMobile && (
@@ -2071,9 +2065,7 @@ function AdminDashboard({ onLogout }) {
       <div style={{ width: 220, background: COLORS.navyLight, borderRight: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", position: "fixed", height: "100vh" }}>
         <div style={{ padding: "22px 18px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-            <div style={{ width: 34, height: 34, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Icon name="zap" size={17} color="#fff" />
-            </div>
+            <img src="/logo.png" alt="FlowSync" style={{ width: 34, height: 34, borderRadius: 10, objectFit: "cover" }} />
             <span style={{ color: "#fff", fontWeight: 800, fontSize: 16 }}>FlowSync</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: `${COLORS.teal}15`, borderRadius: 10, border: `1px solid ${COLORS.teal}30` }}>
@@ -2806,9 +2798,7 @@ export default function App() {
                 </svg>
               </button>
             ) : (
-              <div style={{ width: 34, height: 34, background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.blue})`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Icon name="zap" size={16} color="#fff" />
-              </div>
+              <img src="/logo.png" alt="FlowSync" style={{ width: 34, height: 34, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
             )}
             <span style={{ color: textPrimary, fontWeight: 800, fontSize: isMobile ? 16 : 17 }}>
               {showBackBtn
