@@ -418,7 +418,7 @@ function Sidebar({ user, activeTab, setActiveTab, darkMode, setDarkMode, onLogou
   const managerNav = [
     { id: "dashboard", icon: "dashboard", label: "Dashboard" },
     { id: "tasks", icon: "tasks", label: "Tasks" },
-    { id: "kanban", icon: "kanban", label: "Kanban Board" },
+    { id: "kanban", icon: "kanban", label: "Progress" },
     { id: "team", icon: "team", label: "My Team" },
     { id: "analytics", icon: "analytics", label: "Analytics" },
     { id: "notifications", icon: "bell", label: "Notifications", badge: unread },
@@ -1076,7 +1076,7 @@ function KanbanBoard({ user, tasks, setTasks, darkMode }) {
 
   return (
     <div>
-      <h2 style={{ color: textPrimary, fontSize: 22, fontWeight: 800, marginBottom: 24 }}>Kanban Board</h2>
+      <h2 style={{ color: textPrimary, fontSize: 22, fontWeight: 800, marginBottom: 24 }}>Progress</h2>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
         {cols.map(col => {
           const colTasks = myTasks.filter(t => t.status === col.id);
@@ -1147,7 +1147,12 @@ function TeamManagement({ user, invitations, setInvitations, notifications, setN
   const [gmailMessage, setGmailMessage] = useState("");
   const [gmailError, setGmailError] = useState("");
   const [gmailSuccess, setGmailSuccess] = useState("");
-  const [sentInvites, setSentInvites] = useState([]);
+  const [sentInvites, setSentInvites] = useState(() => {
+    try {
+      const saved = localStorage.getItem("fs_sentInvites_" + user.id);
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [emailSending, setEmailSending] = useState(false);
   const [activeTab, setActiveTab] = useState("members");
   const [aiSuggestion, setAiSuggestion] = useState("");
@@ -1215,7 +1220,11 @@ function TeamManagement({ user, invitations, setInvitations, notifications, setN
         message: personalMsg,
       });
     }
-    setSentInvites(prev => [invite, ...prev]);
+    setSentInvites(prev => {
+      const updated = [invite, ...prev];
+      try { localStorage.setItem("fs_sentInvites_" + user.id, JSON.stringify(updated)); } catch {}
+      return updated;
+    });
 
     // Always store in localStorage by email — real user picks it up on login
     const crossInvite = {
@@ -1448,14 +1457,19 @@ function TeamManagement({ user, invitations, setInvitations, notifications, setN
                 </div>
               ))}
               {invitations.filter(i => i.managerId === user.id).map((inv) => {
-                const emp = MOCK_USERS.employees.find(e => e.id === inv.employeeId);
-                return emp ? (
+                // Try MOCK_USERS first, then use stored team data for real users
+                const emp = MOCK_USERS.employees.find(e => e.id === inv.employeeId) ||
+                  (() => { try { const t = JSON.parse(localStorage.getItem("fs_team_" + user.teamId) || "[]"); return t.find(m => m.id === inv.employeeId); } catch { return null; } })();
+                const displayName = emp?.name || inv.recipientEmail?.split("@")[0] || "Invited User";
+                const displayEmail = emp?.email || inv.recipientEmail || "";
+                const displayAvatar = emp?.avatar || displayName.slice(0,2).toUpperCase();
+                return (
                   <div key={inv.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "15px 20px", borderBottom: `1px solid ${divider}` }}>
-                    <Avatar initials={emp.avatar} size={40} />
+                    <Avatar initials={displayAvatar} size={40} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ color: textPrimary, fontWeight: 600, fontSize: 14 }}>{emp.name}</div>
+                      <div style={{ color: textPrimary, fontWeight: 600, fontSize: 14 }}>{displayName}</div>
                       <div style={{ color: textSecondary, fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
-                        <Icon name="mail" size={11} color={textSecondary} />{emp.email}
+                        <Icon name="mail" size={11} color={textSecondary} />{displayEmail}
                       </div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
@@ -1758,7 +1772,13 @@ function ProfileSection({ user, setUser, tasks, darkMode }) {
   const [editPhone, setEditPhone] = useState(user.phone || "");
   const [editDept, setEditDept] = useState(user.department || "");
   const [editLocation, setEditLocation] = useState(user.location || "");
-  const [photoUrl, setPhotoUrl] = useState(user.photoUrl || null);
+  const [photoUrl, setPhotoUrl] = useState(() => {
+    // Load from localStorage first (survives if user object was too large to store)
+    try {
+      const saved = localStorage.getItem("fs_profilePhoto_" + user.id);
+      return saved || user.photoUrl || null;
+    } catch { return user.photoUrl || null; }
+  });
   const [saved, setSaved] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef(null);
@@ -1779,7 +1799,16 @@ function ProfileSection({ user, setUser, tasks, darkMode }) {
   const handlePhoto = (file) => {
     if (!file || !file.type.startsWith("image/")) return;
     const reader = new FileReader();
-    reader.onload = e => setPhotoUrl(e.target.result);
+    reader.onload = e => {
+      const dataUrl = e.target.result;
+      setPhotoUrl(dataUrl);
+      // Auto-save photo immediately to localStorage
+      try { localStorage.setItem("fs_profilePhoto_" + user.id, dataUrl); } catch {}
+      // Also update user object right away so sidebar reflects immediately
+      setUser(prev => ({ ...prev, photoUrl: dataUrl }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    };
     reader.readAsDataURL(file);
   };
 
@@ -1790,13 +1819,18 @@ function ProfileSection({ user, setUser, tasks, darkMode }) {
 
   const saveProfile = () => {
     if (!editName.trim()) return;
-    setUser(prev => ({
-      ...prev,
+    const updated = {
       name: editName.trim(),
       avatar: editName.trim().split(" ").map(w => w[0]).join("").slice(0,2).toUpperCase(),
       bio: editBio, phone: editPhone, department: editDept,
       location: editLocation, photoUrl,
-    }));
+    };
+    setUser(prev => ({ ...prev, ...updated }));
+    // Persist photo separately in case user object is too large
+    try {
+      if (photoUrl) localStorage.setItem("fs_profilePhoto_" + user.id, photoUrl);
+      else localStorage.removeItem("fs_profilePhoto_" + user.id);
+    } catch {}
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -2802,7 +2836,7 @@ export default function App() {
             )}
             <span style={{ color: textPrimary, fontWeight: 800, fontSize: isMobile ? 16 : 17 }}>
               {showBackBtn
-                ? { tasks:"Tasks", kanban:"Kanban Board", team:"My Team", analytics:"Analytics", notifications:"Notifications", profile:"Profile", settings:"Settings", mytasks:"My Tasks", inbox:"Inbox", activity:"Activity" }[activeTab] || "FlowSync"
+                ? { tasks:"Tasks", kanban:"Progress", team:"My Team", analytics:"Analytics", notifications:"Notifications", profile:"Profile", settings:"Settings", mytasks:"My Tasks", inbox:"Inbox", activity:"Activity" }[activeTab] || "FlowSync"
                 : "FlowSync"}
             </span>
           </div>
