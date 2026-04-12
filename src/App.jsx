@@ -147,12 +147,21 @@ function AuthScreen({ onLogin }) {
     setLoading(true);
     const u = fbUser;
     const data = { id: u.uid, name: u.displayName || u.email.split("@")[0], email: u.email, avatar: ini(u.displayName || u.email), role, photoUrl: u.photoURL || null, teamId: null };
+    // Save to localStorage immediately so login is instant
+    localStorage.setItem("fs_user_cache", JSON.stringify(data));
+    // Login right away without waiting for Firestore
+    onLogin(data);
+    setLoading(false);
+    // Save to Firestore in background
     try {
       const ex = await getDoc(doc(db, "users", u.uid));
-      if (ex.exists()) { onLogin({ ...ex.data(), id: u.uid }); }
-      else { await setDoc(doc(db, "users", u.uid), { ...data, createdAt: serverTimestamp() }); onLogin(data); }
-    } catch { onLogin(data); }
-    setLoading(false);
+      if (ex.exists()) {
+        const full = { ...ex.data(), id: u.uid };
+        localStorage.setItem("fs_user_cache", JSON.stringify(full));
+      } else {
+        await setDoc(doc(db, "users", u.uid), { ...data, createdAt: serverTimestamp() });
+      }
+    } catch {}
   };
 
   const handleAdmin = () => {
@@ -445,7 +454,15 @@ function TaskCard({ task, me, members, canEdit, darkMode }) {
   const [editing, setEdit] = useState(false);
   const [comment, setCom] = useState("");
   const [uploading, setUpl] = useState(false);
-  const [ed, setEd] = useState({ title: task.title, description: task.description || "", deadline: task.deadline?.toDate ? task.deadline.toDate().toISOString().split("T")[0] : (task.deadline || ""), priority: task.priority, category: task.category || "" });
+  const getDeadlineStr = (dl) => {
+    if (!dl) return "";
+    try {
+      const dt = dl?.toDate ? dl.toDate() : new Date(dl);
+      if (isNaN(dt)) return "";
+      return dt.toISOString().split("T")[0];
+    } catch { return ""; }
+  };
+  const [ed, setEd] = useState({ title: task.title || "", description: task.description || "", deadline: getDeadlineStr(task.deadline), priority: task.priority || "medium", category: task.category || "" });
   const fileRef = useRef(null);
   const bg = darkMode ? "#1A3358" : "#fff";
   const bdr = darkMode ? "rgba(255,255,255,0.08)" : C.softGrey;
@@ -471,7 +488,17 @@ function TaskCard({ task, me, members, canEdit, darkMode }) {
     setCom("");
   };
   const saveEdit = async () => {
-    await updateDoc(doc(db, "tasks", task.id), { ...ed, updatedAt: serverTimestamp() });
+    const payload = {
+      title: ed.title,
+      description: ed.description,
+      category: ed.category,
+      priority: ed.priority,
+      deadline: ed.deadline || null,
+      updatedAt: serverTimestamp()
+    };
+    try {
+      await updateDoc(doc(db, "tasks", task.id), payload);
+    } catch (e) { console.error("Save task error:", e); }
     setEdit(false);
   };
   const uploadFile = async (file) => {
@@ -918,17 +945,29 @@ function TeamMgmt({ user, invitations, setInvitations, members, setMembers, dark
   const sendInvite = async () => {
     setErr(""); setOk("");
     const e = email.trim().toLowerCase();
-    if (!e) { setErr("Enter an email."); return; }
-    if (!ve(e)) { setErr("Invalid email."); return; }
-    if (members.find(m => m.email === e)) { setErr("Already on your team!"); return; }
+    if (!e) { setErr("Enter an email address."); return; }
+    if (!ve(e)) { setErr("Invalid email address."); return; }
+    if (members.find(m => m.email === e)) { setErr("This person is already on your team!"); return; }
     setBusy(true);
     const teamId = user.teamId || `team_${user.id}`;
-    const inv = { id: `i${Date.now()}`, email: e, name: e.split("@")[0], message: msg || "Join my team on FlowSync!", status: "pending", sentAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), emailSent: false };
-    await addDoc(IC(), { managerId: user.id, managerName: user.name, managerEmail: user.email, teamId, recipientEmail: e, status: "pending", message: inv.message, time: serverTimestamp() });
-    if (prefs.emailInvite) { inv.emailSent = await sendEmail({ toEmail: e, toName: inv.name, fromName: user.name, subject: `${user.name} invited you to FlowSync`, message: inv.message }); }
+    const invMsg = msg.trim() || "Join my team on FlowSync!";
+    const inv = { id: `i${Date.now()}`, email: e, name: e.split("@")[0], message: invMsg, status: "pending", sentAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), emailSent: false };
+    // Save to Firestore (with timeout so it doesn't hang)
+    try {
+      const firestorePromise = addDoc(IC(), { managerId: user.id, managerName: user.name, managerEmail: user.email, teamId, recipientEmail: e, status: "pending", message: invMsg, time: serverTimestamp() });
+      const timeout = new Promise((_, reject) => setTimeout(() => reject("timeout"), 8000));
+      await Promise.race([firestorePromise, timeout]);
+    } catch (err) {
+      if (err === "timeout") { setErr("Connection slow. Invite saved locally — they will see it next time."); }
+      // Continue anyway — save locally below
+    }
+    // Always save locally regardless of Firestore result
+    if (prefs.emailInvite) {
+      try { inv.emailSent = await sendEmail({ toEmail: e, toName: inv.name, fromName: user.name, subject: `${user.name} invited you to join FlowSync`, message: invMsg }); } catch {}
+    }
     const upd = [inv, ...sent]; setSent(upd);
     try { localStorage.setItem("fs_si_" + user.id, JSON.stringify(upd)); } catch {}
-    setOk(`Invite sent to ${e}!${prefs.emailInvite ? (inv.emailSent ? " Email delivered." : " Email needs EmailJS setup.") : ""}`);
+    setOk(`✅ Invite sent to ${e}! ${prefs.emailInvite ? (inv.emailSent ? "📧 Email delivered." : "⚠️ Email needs EmailJS setup.") : ""}`);
     setEml(""); setMsg(""); setBusy(false);
   };
 
@@ -1250,36 +1289,47 @@ function ProfileSection({ user, setUser, tasks, darkMode }) {
   const ong = myT.filter(t => t.status === "ongoing").length;
   const rate = myT.length ? Math.round((done / myT.length) * 100) : 0;
 
-  const handlePhoto = async (file) => {
+  const handlePhoto = (file) => {
     if (!file || !file.type.startsWith("image/")) return;
-    setUpl(true);
-    try {
-      const r = sRef(storage, `profiles/${user.id}/${Date.now()}_${file.name}`);
-      await uploadBytes(r, file);
-      const url = await getDownloadURL(r);
-      setPhoto(url);
-      await updateDoc(doc(db, "users", user.id), { photoUrl: url });
-      setUser(prev => ({ ...prev, photoUrl: url }));
+    // Step 1: Show preview INSTANTLY using base64 (no waiting)
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const base64 = ev.target.result;
+      setPhoto(base64);
+      setUser(prev => ({ ...prev, photoUrl: base64 }));
+      try { localStorage.setItem("fs_photo_" + user.id, base64); } catch {}
       setSaved(true); setTimeout(() => setSaved(false), 2000);
-    } catch {
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-        const d = ev.target.result; setPhoto(d);
-        setUser(prev => ({ ...prev, photoUrl: d }));
-        try { localStorage.setItem("fs_photo_" + user.id, d); } catch {}
-        setSaved(true); setTimeout(() => setSaved(false), 2000);
-      };
-      reader.readAsDataURL(file);
-    }
-    setUpl(false);
+      // Step 2: Upload to Firebase Storage in background
+      setUpl(true);
+      try {
+        const r = sRef(storage, `profiles/${user.id}/${Date.now()}_${file.name}`);
+        await uploadBytes(r, file);
+        const url = await getDownloadURL(r);
+        // Replace base64 with permanent URL
+        setPhoto(url);
+        setUser(prev => ({ ...prev, photoUrl: url }));
+        await updateDoc(doc(db, "users", user.id), { photoUrl: url });
+        try { localStorage.setItem("fs_user_cache", JSON.stringify({ ...user, photoUrl: url })); } catch {}
+      } catch {
+        // base64 already saved above, Firebase Storage upload failed silently
+      }
+      setUpl(false);
+    };
+    reader.readAsDataURL(file);
   };
 
   const saveProfile = async () => {
     if (!editName.trim()) return;
-    const updated = { name: editName.trim(), avatar: ini(editName), bio: editBio, phone: editPhone, department: editDept, location: editLoc, photoUrl };
+    const updated = { name: editName.trim(), avatar: ini(editName.trim()), bio: editBio, phone: editPhone, department: editDept, location: editLoc, photoUrl };
+    // Update state immediately
+    setUser(prev => {
+      const newUser = { ...prev, ...updated };
+      try { localStorage.setItem("fs_user_cache", JSON.stringify(newUser)); } catch {}
+      return newUser;
+    });
+    setSaved(true); setTimeout(() => setSaved(false), 3000);
+    // Save to Firestore in background
     try { await updateDoc(doc(db, "users", user.id), updated); } catch {}
-    setUser(prev => ({ ...prev, ...updated }));
-    setSaved(true); setTimeout(() => setSaved(false), 2500);
   };
 
   const updatePref = (key, val) => { const u = { ...prefs, [key]: val }; setPrefs(u); savePrefs(u); setSaved(true); setTimeout(() => setSaved(false), 1500); };
@@ -1528,14 +1578,37 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Instantly restore from localStorage so there's no delay
+    try {
+      const cached = localStorage.getItem("fs_user_cache");
+      if (cached) {
+        const u = JSON.parse(cached);
+        setUserRaw(u);
+        setAuthLoading(false); // show app immediately
+      }
+    } catch {}
+
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         try {
           const userDoc = await getDoc(doc(db, "users", fbUser.uid));
-          if (userDoc.exists()) setUserRaw({ ...userDoc.data(), id: fbUser.uid });
-        } catch {}
+          if (userDoc.exists()) {
+            const u = { ...userDoc.data(), id: fbUser.uid };
+            setUserRaw(u);
+            localStorage.setItem("fs_user_cache", JSON.stringify(u));
+          }
+        } catch {
+          // If Firestore fails, keep cached version
+        }
       } else {
-        try { const s = localStorage.getItem("fs_admin"); if (s) setUserRaw({ id: "admin", name: "Admin", email: ADMIN_EMAIL, avatar: "AD", role: "admin", teamId: null }); } catch {}
+        try {
+          const s = localStorage.getItem("fs_admin");
+          if (s) setUserRaw({ id: "admin", name: "Admin", email: ADMIN_EMAIL, avatar: "AD", role: "admin", teamId: null });
+          else {
+            localStorage.removeItem("fs_user_cache");
+            setUserRaw(null);
+          }
+        } catch {}
       }
       setAuthLoading(false);
     });
@@ -1584,10 +1657,14 @@ export default function App() {
 
   const setUser = (u) => {
     setUserRaw(u);
-    if (u && u.id !== "admin") {
-      try { updateDoc(doc(db, "users", u.id), { name: u.name, photoUrl: u.photoUrl || null, avatar: u.avatar, bio: u.bio || null, phone: u.phone || null, department: u.department || null, location: u.location || null, teamId: u.teamId || null }).catch(() => {}); } catch {}
+    if (u) {
+      try { localStorage.setItem("fs_user_cache", JSON.stringify(u)); } catch {}
+      if (u.id !== "admin") {
+        try { updateDoc(doc(db, "users", u.id), { name: u.name, photoUrl: u.photoUrl || null, avatar: u.avatar, bio: u.bio || null, phone: u.phone || null, department: u.department || null, location: u.location || null, teamId: u.teamId || null }).catch(() => {}); } catch {}
+      }
+    } else {
+      try { localStorage.removeItem("fs_user_cache"); localStorage.removeItem("fs_admin"); } catch {}
     }
-    if (!u) { try { localStorage.removeItem("fs_admin"); } catch {} }
   };
 
   const toggleDark = (v) => { setDarkMode(v); try { localStorage.setItem("fs_dark", JSON.stringify(v)); } catch {}; };
@@ -1613,7 +1690,7 @@ export default function App() {
 
   const handleLogout = () => {
     try { signOut(auth); } catch {}
-    try { localStorage.removeItem("fs_admin"); } catch {}
+    try { localStorage.removeItem("fs_admin"); localStorage.removeItem("fs_user_cache"); } catch {}
     setUserRaw(null); setTasks([]); setInvitations([]); setNotifications([]); setTeamMembers([]);
   };
 
