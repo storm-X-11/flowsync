@@ -4,16 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>FlowSync</title>
+
+    <!-- Favicon & App Icons -->
     <link rel="icon" type="image/png" href="/logo.png" />
     <link rel="apple-touch-icon" href="/logo-192.png" />
+
+    <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#0A1628" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="FlowSync" />
     <meta name="description" content="FlowSync — Workflow Management Platform" />
+
     <style>
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
       html, body, #root {
         min-height: 100%;
         min-height: 100dvh;
@@ -22,11 +31,30 @@
         font-family: 'DM Sans', sans-serif;
         overscroll-behavior: none;
         -webkit-tap-highlight-color: transparent;
+        -webkit-overflow-scrolling: touch;
       }
-      body { background-color: #0A1628; }
-      input, button, textarea, select { font-family: inherit; }
-      ::-webkit-scrollbar { width: 4px; }
-      ::-webkit-scrollbar-thumb { background: rgba(13,191,191,0.3); border-radius: 4px; }
+      body {
+        background-color: #0A1628;
+      }
+      input, button, textarea, select {
+        font-family: inherit;
+      }
+      ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(13, 191, 191, 0.3);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(13, 191, 191, 0.6);
+      }
+
+      /* Splash screen */
       #splash {
         position: fixed;
         inset: 0;
@@ -39,44 +67,70 @@
         transition: opacity 0.4s ease;
       }
       #splash img {
-        width: 120px;
-        height: 120px;
-        border-radius: 28px;
-        animation: pulse 1.5s ease-in-out infinite;
+        width: 110px;
+        height: 110px;
+        border-radius: 26px;
+        object-fit: cover;
+        animation: splashPulse 1.5s ease-in-out infinite;
+        margin-bottom: 28px;
       }
-      #splash p {
+      #splash-title {
         color: #0DBFBF;
-        font-size: 22px;
+        font-size: 24px;
         font-weight: 800;
-        margin-top: 20px;
         letter-spacing: -0.3px;
+        margin-bottom: 6px;
+        font-family: 'DM Sans', sans-serif;
       }
-      #splash small {
+      #splash-sub {
         color: #4A5568;
         font-size: 13px;
-        margin-top: 6px;
+        font-family: 'DM Sans', sans-serif;
+        margin-bottom: 40px;
       }
-      @keyframes pulse {
+      #splash-spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid rgba(13, 191, 191, 0.25);
+        border-top-color: #0DBFBF;
+        border-radius: 50%;
+        animation: splashSpin 0.8s linear infinite;
+      }
+      @keyframes splashPulse {
         0%, 100% { transform: scale(1); opacity: 1; }
         50% { transform: scale(1.06); opacity: 0.85; }
+      }
+      @keyframes splashSpin {
+        to { transform: rotate(360deg); }
       }
     </style>
   </head>
   <body>
+
+    <!-- Splash screen shown while app loads -->
     <div id="splash">
       <img src="/logo.png" alt="FlowSync" />
-      <p>FlowSync</p>
-      <small>Workflow Management Platform</small>
+      <div id="splash-title">FlowSync</div>
+      <div id="splash-sub">Workflow Management Platform</div>
+      <div id="splash-spinner"></div>
     </div>
+
     <div id="root"></div>
+
     <script type="module" src="/src/main.jsx"></script>
+
     <script>
+      // Hide splash after app loads
       window.addEventListener('load', () => {
         setTimeout(() => {
           const s = document.getElementById('splash');
-          if (s) { s.style.opacity = '0'; setTimeout(() => s.remove(), 400); }
+          if (s) {
+            s.style.opacity = '0';
+            setTimeout(() => s.remove(), 400);
+          }
         }, 800);
       });
     </script>
+
   </body>
 </html>
