@@ -146,22 +146,56 @@ function AuthScreen({ onLogin }) {
   const handleRole = async (role) => {
     setLoading(true);
     const u = fbUser;
-    const data = { id: u.uid, name: u.displayName || u.email.split("@")[0], email: u.email, avatar: ini(u.displayName || u.email), role, photoUrl: u.photoURL || null, teamId: null };
-    // Save to localStorage immediately so login is instant
-    localStorage.setItem("fs_user_cache", JSON.stringify(data));
-    // Login right away without waiting for Firestore
-    onLogin(data);
-    setLoading(false);
-    // Save to Firestore in background
+    // Base data from Google account
+    const baseData = {
+      id: u.uid,
+      name: u.displayName || u.email.split("@")[0],
+      email: u.email,
+      avatar: ini(u.displayName || u.email),
+      role,
+      photoUrl: u.photoURL || null,
+      teamId: null,
+    };
     try {
+      // Always check Firestore first — returning users have existing data
       const ex = await getDoc(doc(db, "users", u.uid));
       if (ex.exists()) {
-        const full = { ...ex.data(), id: u.uid };
+        // RETURNING USER: restore ALL their data (teamId, profile, role etc.)
+        const existing = ex.data();
+        const full = {
+          ...baseData,
+          ...existing,   // existing data wins — keeps teamId, bio, phone, dept etc.
+          id: u.uid,
+          // Only update photo if Google has one and Firestore doesn't
+          photoUrl: existing.photoUrl || u.photoURL || null,
+        };
         localStorage.setItem("fs_user_cache", JSON.stringify(full));
+        onLogin(full);
+        // Update role and name silently in background if changed
+        await updateDoc(doc(db, "users", u.uid), {
+          name: u.displayName || existing.name,
+          role: existing.role || role,
+          lastLogin: serverTimestamp(),
+        }).catch(() => {});
       } else {
-        await setDoc(doc(db, "users", u.uid), { ...data, createdAt: serverTimestamp() });
+        // NEW USER: create their profile in Firestore
+        await setDoc(doc(db, "users", u.uid), { ...baseData, createdAt: serverTimestamp(), lastLogin: serverTimestamp() });
+        localStorage.setItem("fs_user_cache", JSON.stringify(baseData));
+        onLogin(baseData);
       }
-    } catch {}
+    } catch (err) {
+      // Firestore unreachable — use cached data or base data
+      const cached = localStorage.getItem("fs_user_cache");
+      if (cached) {
+        try {
+          const cachedUser = JSON.parse(cached);
+          if (cachedUser.id === u.uid) { onLogin(cachedUser); setLoading(false); return; }
+        } catch {}
+      }
+      localStorage.setItem("fs_user_cache", JSON.stringify(baseData));
+      onLogin(baseData);
+    }
+    setLoading(false);
   };
 
   const handleAdmin = () => {
@@ -756,7 +790,21 @@ function TaskList({ user, tasks, members, darkMode }) {
   const addTask = async () => {
     if (!nt.title.trim()) return;
     const fa = mode === "team" ? members.map(m => m.id) : nt.assignedTo;
-    await addDoc(TC(), { ...nt, assignedTo: fa, teamId: user.teamId || `team_${user.id}`, managerId: user.id, comments: [], attachments: [], status: "pending", createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    await addDoc(TC(), {
+      title: nt.title,
+      description: nt.description,
+      deadline: nt.deadline || null,
+      priority: nt.priority,
+      category: nt.category || "",
+      assignedTo: fa,
+      teamId: user.teamId || `team_${user.id}`,
+      managerId: user.id,  // Always Firebase UID — persists across logouts
+      comments: [],
+      attachments: [],
+      status: "pending",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
     const prefs = loadPrefs();
     if (prefs.taskAssigned) {
       for (const uid of fa) {
@@ -1593,19 +1641,32 @@ export default function App() {
         try {
           const userDoc = await getDoc(doc(db, "users", fbUser.uid));
           if (userDoc.exists()) {
+            // Full Firestore data — includes teamId, bio, role, everything
             const u = { ...userDoc.data(), id: fbUser.uid };
             setUserRaw(u);
             localStorage.setItem("fs_user_cache", JSON.stringify(u));
+          } else {
+            // User in Firebase Auth but not Firestore — show role selector
+            // Keep cached version if exists
+            const cached = localStorage.getItem("fs_user_cache");
+            if (cached) {
+              try {
+                const cp = JSON.parse(cached);
+                if (cp.id === fbUser.uid) setUserRaw(cp);
+              } catch {}
+            }
           }
         } catch {
-          // If Firestore fails, keep cached version
+          // Firestore failed — keep cached version (already set above)
         }
       } else {
+        // Logged out
         try {
           const s = localStorage.getItem("fs_admin");
-          if (s) setUserRaw({ id: "admin", name: "Admin", email: ADMIN_EMAIL, avatar: "AD", role: "admin", teamId: null });
-          else {
-            localStorage.removeItem("fs_user_cache");
+          if (s) {
+            setUserRaw({ id: "admin", name: "Admin", email: ADMIN_EMAIL, avatar: "AD", role: "admin", teamId: null });
+          } else {
+            // Only clear cache on explicit logout (not on network errors)
             setUserRaw(null);
           }
         } catch {}
@@ -1618,21 +1679,55 @@ export default function App() {
   useEffect(() => {
     if (!user || user.role === "admin") return;
     const unsubs = [];
-    const tq = user.role === "manager" ? query(TC(), where("managerId", "==", user.id)) : query(TC(), where("assignedTo", "array-contains", user.id));
-    unsubs.push(onSnapshot(tq, s => setTasks(s.docs.map(d => ({ id: d.id, ...d.data() })))));
+
+    // Tasks — manager sees own tasks, employee sees assigned tasks
+    try {
+      const tq = user.role === "manager"
+        ? query(TC(), where("managerId", "==", user.id))
+        : query(TC(), where("assignedTo", "array-contains", user.id));
+      unsubs.push(onSnapshot(tq, snap => {
+        setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }, err => console.error("Tasks listener error:", err.message)));
+    } catch (e) { console.error("Tasks setup error:", e); }
+
+    // Notifications
     try {
       const nq = query(NC(), where("userId", "==", user.id), orderBy("time", "desc"));
-      unsubs.push(onSnapshot(nq, s => setNotifications(s.docs.map(d => ({ id: d.id, ...d.data() })))));
+      unsubs.push(onSnapshot(nq, snap => {
+        setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }, err => {
+        // If index missing, try without orderBy
+        try {
+          const nq2 = query(NC(), where("userId", "==", user.id));
+          const u2 = onSnapshot(nq2, snap => setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+          unsubs.push(u2);
+        } catch {}
+      }));
     } catch {}
+
+    // Invitations
     try {
-      const iq = user.role === "manager" ? query(IC(), where("managerId", "==", user.id)) : query(IC(), where("recipientEmail", "==", user.email));
-      unsubs.push(onSnapshot(iq, s => setInvitations(s.docs.map(d => ({ id: d.id, ...d.data() })))));
+      const iq = user.role === "manager"
+        ? query(IC(), where("managerId", "==", user.id))
+        : query(IC(), where("recipientEmail", "==", user.email));
+      unsubs.push(onSnapshot(iq, snap => {
+        setInvitations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }, err => console.error("Invitations error:", err.message)));
     } catch {}
+
+    // Team members — load if teamId exists
     if (user.teamId) {
-      const mq = query(collection(db, "users"), where("teamId", "==", user.teamId));
-      unsubs.push(onSnapshot(mq, s => setTeamMembers(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.id !== user.id))));
+      try {
+        const mq = query(collection(db, "users"), where("teamId", "==", user.teamId));
+        unsubs.push(onSnapshot(mq, snap => {
+          setTeamMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.id !== user.id));
+        }, err => console.error("Team members error:", err.message)));
+      } catch {}
+    } else {
+      setTeamMembers([]);
     }
-    return () => unsubs.forEach(u => u());
+
+    return () => unsubs.forEach(u => { try { u(); } catch {} });
   }, [user?.id, user?.teamId, user?.role]);
 
   useEffect(() => {
@@ -1658,9 +1753,21 @@ export default function App() {
   const setUser = (u) => {
     setUserRaw(u);
     if (u) {
+      // Always persist full user to localStorage — survives refresh and re-login
       try { localStorage.setItem("fs_user_cache", JSON.stringify(u)); } catch {}
       if (u.id !== "admin") {
-        try { updateDoc(doc(db, "users", u.id), { name: u.name, photoUrl: u.photoUrl || null, avatar: u.avatar, bio: u.bio || null, phone: u.phone || null, department: u.department || null, location: u.location || null, teamId: u.teamId || null }).catch(() => {}); } catch {}
+        // Sync to Firestore silently — keeps data consistent across devices
+        const firestoreUpdate = {
+          name: u.name,
+          photoUrl: u.photoUrl || null,
+          avatar: u.avatar || ini(u.name),
+          teamId: u.teamId || null,
+        };
+        if (u.bio !== undefined) firestoreUpdate.bio = u.bio;
+        if (u.phone !== undefined) firestoreUpdate.phone = u.phone;
+        if (u.department !== undefined) firestoreUpdate.department = u.department;
+        if (u.location !== undefined) firestoreUpdate.location = u.location;
+        try { updateDoc(doc(db, "users", u.id), firestoreUpdate).catch(() => {}); } catch {}
       }
     } else {
       try { localStorage.removeItem("fs_user_cache"); localStorage.removeItem("fs_admin"); } catch {}
@@ -1690,8 +1797,17 @@ export default function App() {
 
   const handleLogout = () => {
     try { signOut(auth); } catch {}
-    try { localStorage.removeItem("fs_admin"); localStorage.removeItem("fs_user_cache"); } catch {}
-    setUserRaw(null); setTasks([]); setInvitations([]); setNotifications([]); setTeamMembers([]);
+    // Clear ALL cached data on explicit logout
+    try {
+      localStorage.removeItem("fs_admin");
+      localStorage.removeItem("fs_user_cache");
+      localStorage.removeItem("fs_dark");
+      localStorage.removeItem("fs_np");
+    } catch {}
+    setUserRaw(null);
+    setTasks([]); setInvitations([]); setNotifications([]); setTeamMembers([]);
+    setActiveTabRaw("dashboard");
+    setTabHistory(["dashboard"]);
   };
 
   const bg = darkMode ? C.navy : C.offWhite;
