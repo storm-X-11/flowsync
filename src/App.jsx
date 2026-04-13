@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { auth, googleProvider, db, storage } from "./firebase";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import {
-  collection, doc, setDoc, getDoc, updateDoc, deleteDoc,
+  collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
   onSnapshot, query, where, orderBy, addDoc, serverTimestamp, arrayUnion
 } from "firebase/firestore";
 import { ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -640,7 +640,7 @@ function MgrDash({ user, tasks, members, darkMode }) {
   return (
     <div>
       <div style={{ marginBottom: 28 }}>
-        <h1 style={{ color: tp, fontSize: 26, fontWeight: 800, marginBottom: 4 }}>Good morning, {user.name.split(" ")[0]} 👋</h1>
+        <h1 style={{ color: tp, fontSize: 26, fontWeight: 800, marginBottom: 4 }}>Good morning, {(user.name || "").split(" ")[0] || "there"} 👋</h1>
         <p style={{ color: ts, fontSize: 14 }}>Live team data synced from Firestore</p>
       </div>
       {upcoming.length > 0 && (
@@ -1459,12 +1459,12 @@ function SettingsPage({ user, setUser, onLogout, darkMode }) {
     if (!delPw) { setDelErr("Enter the confirmation password."); return; }
     if (delPw !== CONF) { setDelErr("Incorrect password."); return; }
     try {
-      const tSnap = await import("firebase/firestore").then(({ getDocs, query, collection, where }) => getDocs(query(collection(db, "tasks"), where("managerId", "==", user.id))));
+      const tSnap = await getDocs(query(collection(db, "tasks"), where("managerId", "==", user.id)));
       for (const d of tSnap.docs) await deleteDoc(d.ref);
-      const nSnap = await import("firebase/firestore").then(({ getDocs, query, collection, where }) => getDocs(query(collection(db, "notifications"), where("userId", "==", user.id))));
+      const nSnap = await getDocs(query(collection(db, "notifications"), where("userId", "==", user.id)));
       for (const d of nSnap.docs) await deleteDoc(d.ref);
       await deleteDoc(doc(db, "users", user.id));
-    } catch {}
+    } catch(e) { console.error("Delete error:", e); }
     Object.keys(localStorage).filter(k => k.startsWith("fs_")).forEach(k => localStorage.removeItem(k));
     setDone(true);
     setTimeout(() => { try { signOut(auth); } catch {} setUser(null); }, 2000);
@@ -1853,6 +1853,12 @@ export default function App() {
       }
     }
   };
+
+  // Catch any render errors
+  if (!user.id || !user.role) {
+    localStorage.removeItem("fs_user_cache");
+    return <AuthScreen onLogin={u => { setUser(u); setActiveTabRaw("dashboard"); setTabHistory(["dashboard"]); }} />;
+  }
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: bg, fontFamily: "'DM Sans', sans-serif", transition: "background 0.3s" }}>
