@@ -146,58 +146,31 @@ function AuthScreen({ onLogin }) {
   const handleRole = async (role) => {
     setLoading(true);
     const u = fbUser;
-    // Base data from Google account
     const baseData = {
-      id: u.uid,
-      name: u.displayName || u.email.split("@")[0],
-      email: u.email,
-      avatar: ini(u.displayName || u.email),
-      role,
-      photoUrl: u.photoURL || null,
-      teamId: null,
+      id: u.uid, name: u.displayName || u.email.split("@")[0],
+      email: u.email, avatar: ini(u.displayName || u.email),
+      role, photoUrl: u.photoURL || null, teamId: null,
     };
     try {
-      // Always check Firestore first — returning users have existing data
       const ex = await getDoc(doc(db, "users", u.uid));
       if (ex.exists()) {
-        // RETURNING USER: restore ALL their data (teamId, profile, role etc.)
-        const existing = ex.data();
-        const full = {
-          ...baseData,
-          ...existing,   // existing data wins — keeps teamId, bio, phone, dept etc.
-          id: u.uid,
-          // Only update photo if Google has one and Firestore doesn't
-          photoUrl: existing.photoUrl || u.photoURL || null,
-        };
-        localStorage.setItem("fs_user_cache", JSON.stringify(full));
-        onLogin(full);
-        // Update role and name silently in background if changed
-        await updateDoc(doc(db, "users", u.uid), {
-          name: u.displayName || existing.name,
-          role: existing.role || role,
-          lastLogin: serverTimestamp(),
-        }).catch(() => {});
+        // RETURNING USER: restore all saved data — tasks, team, profile all intact
+        const savedData = { ...ex.data(), id: u.uid };
+        localStorage.setItem("fs_user_cache", JSON.stringify(savedData));
+        onLogin(savedData);
       } else {
-        // NEW USER: create their profile in Firestore
-        await setDoc(doc(db, "users", u.uid), { ...baseData, createdAt: serverTimestamp(), lastLogin: serverTimestamp() });
+        // NEW USER: save to Firestore immediately so data is never lost
+        await setDoc(doc(db, "users", u.uid), { ...baseData, createdAt: serverTimestamp() });
         localStorage.setItem("fs_user_cache", JSON.stringify(baseData));
         onLogin(baseData);
       }
-    } catch (err) {
-      // Firestore unreachable — use cached data or base data
-      const cached = localStorage.getItem("fs_user_cache");
-      if (cached) {
-        try {
-          const cachedUser = JSON.parse(cached);
-          if (cachedUser.id === u.uid) { onLogin(cachedUser); setLoading(false); return; }
-        } catch {}
-      }
+    } catch {
+      // Firestore unavailable — use localStorage fallback
       localStorage.setItem("fs_user_cache", JSON.stringify(baseData));
       onLogin(baseData);
     }
     setLoading(false);
   };
-
   const handleAdmin = () => {
     setErr("");
     if (adEmail.trim().toLowerCase() === ADMIN_EMAIL && adPass === ADMIN_PASSWORD) {
@@ -1505,7 +1478,7 @@ function SettingsPage({ user, setUser, onLogout, darkMode }) {
         {sec !== "main" && <button onClick={() => { setSec(sec === "deleteconfirm" ? "yourinfo" : "main"); setDelErr(""); setDelPw(""); }} style={{ background: darkMode ? "rgba(255,255,255,0.06)" : C.softGrey, border: "none", borderRadius: 8, width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={tp} strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>}
-        <h2 style={{ color: tp, fontSize: 22, fontWeight: 800 }}>{{ main: "Settings", yourinfo: "Your Info", notifications: "Notifications", deleteconfirm: "Delete Account" }[sec] || "Settings"}</h2>
+        <h2 style={{ color: tp, fontSize: 22, fontWeight: 800 }}>{({ main: "Settings", yourinfo: "Your Info", notifications: "Notifications", deleteconfirm: "Delete Account" })[sec] || "Settings"}</h2>
       </div>
 
       {sec === "main" && (
@@ -1626,52 +1599,64 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Instantly restore from localStorage so there's no delay
+    // Instantly restore from localStorage — but validate the cached data first
     try {
       const cached = localStorage.getItem("fs_user_cache");
       if (cached) {
         const u = JSON.parse(cached);
-        setUserRaw(u);
-        setAuthLoading(false); // show app immediately
+        // Only restore if it has the required fields
+        if (u && u.id && u.role && (u.role === "manager" || u.role === "employee" || u.role === "admin")) {
+          setUserRaw(u);
+          setAuthLoading(false); // show app immediately
+        } else {
+          // Corrupted cache — remove it
+          localStorage.removeItem("fs_user_cache");
+        }
       }
-    } catch {}
+    } catch {
+      localStorage.removeItem("fs_user_cache");
+    }
 
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         try {
           const userDoc = await getDoc(doc(db, "users", fbUser.uid));
           if (userDoc.exists()) {
-            // Full Firestore data — includes teamId, bio, role, everything
+            // Always load fresh Firestore data on login — restores everything
             const u = { ...userDoc.data(), id: fbUser.uid };
             setUserRaw(u);
             localStorage.setItem("fs_user_cache", JSON.stringify(u));
           } else {
-            // User in Firebase Auth but not Firestore — show role selector
-            // Keep cached version if exists
-            const cached = localStorage.getItem("fs_user_cache");
-            if (cached) {
-              try {
-                const cp = JSON.parse(cached);
-                if (cp.id === fbUser.uid) setUserRaw(cp);
-              } catch {}
-            }
+            // Firestore doc missing — try to restore from cache and re-save
+            try {
+              const cached = localStorage.getItem("fs_user_cache");
+              if (cached) {
+                const cu = JSON.parse(cached);
+                if (cu.id === fbUser.uid) {
+                  await setDoc(doc(db, "users", fbUser.uid), { ...cu, restoredAt: serverTimestamp() }, { merge: true });
+                  setUserRaw(cu);
+                }
+              }
+            } catch {}
           }
         } catch {
-          // Firestore failed — keep cached version (already set above)
+          // Firestore failed — use localStorage cache
+          try {
+            const cached = localStorage.getItem("fs_user_cache");
+            if (cached) setUserRaw(JSON.parse(cached));
+          } catch {}
         }
       } else {
-        // Logged out
         try {
           const s = localStorage.getItem("fs_admin");
-          if (s) {
-            setUserRaw({ id: "admin", name: "Admin", email: ADMIN_EMAIL, avatar: "AD", role: "admin", teamId: null });
-          } else {
-            // Only clear cache on explicit logout (not on network errors)
+          if (s) setUserRaw({ id: "admin", name: "Admin", email: ADMIN_EMAIL, avatar: "AD", role: "admin", teamId: null });
+          else {
+            localStorage.removeItem("fs_user_cache");
             setUserRaw(null);
           }
         } catch {}
       }
-      setAuthLoading(false);
+            setAuthLoading(false);
     });
     return () => unsub();
   }, []);
@@ -1685,10 +1670,11 @@ export default function App() {
       const tq = user.role === "manager"
         ? query(TC(), where("managerId", "==", user.id))
         : query(TC(), where("assignedTo", "array-contains", user.id));
-      unsubs.push(onSnapshot(tq, snap => {
-        setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      }, err => console.error("Tasks listener error:", err.message)));
-    } catch (e) { console.error("Tasks setup error:", e); }
+      unsubs.push(onSnapshot(tq,
+        snap => setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+        err => { console.warn("Tasks listener:", err.code); setTasks([]); }
+      ));
+    } catch (e) { console.warn("Tasks setup:", e.message); setTasks([]); }
 
     // Notifications
     try {
@@ -1753,26 +1739,19 @@ export default function App() {
   const setUser = (u) => {
     setUserRaw(u);
     if (u) {
-      // Always persist full user to localStorage — survives refresh and re-login
       try { localStorage.setItem("fs_user_cache", JSON.stringify(u)); } catch {}
-      if (u.id !== "admin") {
-        // Sync to Firestore silently — keeps data consistent across devices
-        const firestoreUpdate = {
-          name: u.name,
-          photoUrl: u.photoUrl || null,
-          avatar: u.avatar || ini(u.name),
-          teamId: u.teamId || null,
-        };
-        if (u.bio !== undefined) firestoreUpdate.bio = u.bio;
-        if (u.phone !== undefined) firestoreUpdate.phone = u.phone;
-        if (u.department !== undefined) firestoreUpdate.department = u.department;
-        if (u.location !== undefined) firestoreUpdate.location = u.location;
-        try { updateDoc(doc(db, "users", u.id), firestoreUpdate).catch(() => {}); } catch {}
+      if (u.id && u.id !== "admin") {
+        const fd = { name: u.name || "", email: u.email || "", role: u.role || "employee",
+          photoUrl: u.photoUrl || null, avatar: u.avatar || ini(u.name),
+          bio: u.bio || null, phone: u.phone || null, department: u.department || null,
+          location: u.location || null, teamId: u.teamId || null, updatedAt: serverTimestamp() };
+        setDoc(doc(db, "users", u.id), fd, { merge: true }).catch(() => {});
       }
     } else {
       try { localStorage.removeItem("fs_user_cache"); localStorage.removeItem("fs_admin"); } catch {}
     }
   };
+
 
   const toggleDark = (v) => { setDarkMode(v); try { localStorage.setItem("fs_dark", JSON.stringify(v)); } catch {}; };
 
@@ -1821,7 +1800,12 @@ export default function App() {
 
   if (authLoading) return <Loader msg="Restoring your session..." />;
   if (!user) return <AuthScreen onLogin={u => { setUser(u); setActiveTabRaw("dashboard"); setTabHistory(["dashboard"]); }} />;
-  if (user.role === "admin") return <AdminDash onLogout={() => { try { signOut(auth); } catch {} localStorage.removeItem("fs_admin"); setUserRaw(null); }} />;
+  if (user.role === "admin") return <AdminDash onLogout={() => { try { signOut(auth); } catch {} localStorage.removeItem("fs_admin"); localStorage.removeItem("fs_user_cache"); setUserRaw(null); }} />;
+  // Safety: if role is missing or corrupted, clear cache and re-login
+  if (!user.role || (user.role !== "manager" && user.role !== "employee")) {
+    localStorage.removeItem("fs_user_cache");
+    return <AuthScreen onLogin={u => { setUser(u); setActiveTabRaw("dashboard"); setTabHistory(["dashboard"]); }} />;
+  }
 
   const renderContent = () => {
     if (user.role === "manager") {
@@ -1844,7 +1828,7 @@ export default function App() {
             <div>
               <div style={{ marginBottom: 28 }}>
                 <h1 style={{ color: tp, fontSize: 26, fontWeight: 800, marginBottom: 4 }}>My Workspace</h1>
-                <p style={{ color: ts, fontSize: 14 }}>Welcome back, {user.name.split(" ")[0]} 👋</p>
+                <p style={{ color: ts, fontSize: 14 }}>Welcome back, {(user.name || "there").split(" ")[0]} 👋</p>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16, marginBottom: 24 }}>
                 {[{ label: "My Tasks", value: tasks.length, icon: "tasks", color: C.blue }, { label: "Completed", value: tasks.filter(t => t.status === "completed").length, icon: "check", color: C.success }, { label: "In Progress", value: tasks.filter(t => t.status === "ongoing").length, icon: "activity", color: C.teal }, { label: "Invites", value: invitations.filter(i => i.status === "pending").length, icon: "mail", color: C.warning }].map(s => (
@@ -1895,7 +1879,7 @@ export default function App() {
           </div>
         </div>
         <div style={{ flex: 1, padding: isMobile ? "20px 16px" : "28px 36px", maxWidth: 1100, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
-          {renderContent()}
+          {(() => { try { return renderContent(); } catch(e) { return <div style={{padding:40,color:"#EF4444",fontSize:14}}>⚠️ Render error: {e.message}</div>; } })()}
         </div>
       </main>
     </div>
